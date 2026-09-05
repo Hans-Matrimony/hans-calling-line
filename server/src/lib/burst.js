@@ -5,7 +5,7 @@ import { releaseLead, pickFromNumber } from './queue.js';
 import { resolveLead } from './countries.js';
 import { hangup, beep, bridge, dialLead, startTick, noAnswerTone, stopPlayback } from '../telnyx.js';
 
-const BEEP_TIMEOUT_MS = 1500; // bridge anyway if Telnyx never reports the beep finished
+const BEEP_TIMEOUT_MS = 900; // bridge anyway if Telnyx never reports the beep finished; short, to shrink the dead-air window in which a lead can hang up before we bridge
 
 // Rep-leg audio cues. The beep must finish before we bridge, so we wait for Telnyx's
 // call.playback.ended for beep.wav on that leg (webhooks.js -> onRepPlaybackEnded).
@@ -64,20 +64,27 @@ async function onAnswered(ccid, userId, burstId, leadId) {
 
   await q('UPDATE calls SET answered_at = now() WHERE id = $1', [won.call_id]);
   await cancelOpenLegs(burstId, won.call_id);
-  emitToUser(userId, 'lead:answered', await leadCard(won.call_id)); // card is up while the beep sounds
+  // Card goes up while the beep sounds. Not awaited: a DB hiccup here must never leave an answered human unbridged.
+  leadCard(won.call_id).then((card) => emitToUser(userId, 'lead:answered', card)).catch((e) => console.error('leadCard', e.message));
 
   const rep = await repLeg(userId);
   if (!rep) { await hangup(ccid); return; } // rep leg vanished mid-burst
 
   try {
     await stopPlayback(rep);      // end the dialing tick
-    await beepThenWait(rep);      // "say hello now"; resolves on playback.ended (or 1.5 s)
+    await beepThenWait(rep);      // "say hello now"; resolves on playback.ended (or the timeout)
     await bridge(rep, ccid);
     emitToUser(userId, 'call:bridged', { callId: won.call_id });
   } catch (e) {
-    console.error('bridge failed', e.message);
-    await hangup(ccid);
-    emitToUser(userId, 'call:error', { callId: won.call_id, error: 'bridge failed: ' + e.message });
+    // Most common: the lead hung up during the beep window, so bridge hits a dead leg (90015/90018).
+    // Never strand the rep in a fake call - silence the rep leg and end this call so the UI leaves 'live'
+    // and the rep can disposition it (the lead's own call.hangup, if any, settles the rest idempotently).
+    console.warn('bridge failed', e.message);
+    await stopRepAudio(userId);
+    await hangup(ccid).catch(() => {}); // drop the lead if still up; ignore "already ended"
+    const { rows: [d] } = await q(
+      `UPDATE calls SET duration = coalesce(duration, EXTRACT(EPOCH FROM (now() - answered_at))::int) WHERE id = $1 RETURNING duration, disposition`, [won.call_id]);
+    if (!d?.disposition) emitToUser(userId, 'call:ended', { callId: won.call_id, leadId, duration: d?.duration ?? 0, cause: 'bridge_failed' });
   }
 }
 
@@ -133,9 +140,12 @@ export async function cancelOpenLegs(burstId, keepCallId = null) {
 /** Lead card (plan s10): name, country, attempt #, last outcome. Company is not in the export. */
 async function leadCard(callId) {
   const { rows: [r] } = await q(
-    `SELECT c.id AS "callId", l.id AS "leadId", l.name, l.phone, l.country, l.segment, l.attempt_count + 1 AS attempt,
+    `SELECT c.id AS "callId", l.id AS "leadId", l.name, l.phone, l.country, l.segment, l.utc_offset AS "utcOffset",
+            l.hubspot_contact_id AS "hubspotId", l.extra, l.attempt_count + 1 AS attempt,
             (SELECT p.disposition FROM calls p WHERE p.lead_id = l.id AND p.id <> c.id AND p.disposition IS NOT NULL
-             ORDER BY p.started_at DESC LIMIT 1) AS "lastOutcome"
+             ORDER BY p.started_at DESC LIMIT 1) AS "lastOutcome",
+            (SELECT p.notes FROM calls p WHERE p.lead_id = l.id AND p.id <> c.id AND p.notes IS NOT NULL
+             ORDER BY p.started_at DESC LIMIT 1) AS "lastNote"
      FROM calls c JOIN leads l ON l.id = c.lead_id WHERE c.id = $1`, [callId]);
   return r;
 }

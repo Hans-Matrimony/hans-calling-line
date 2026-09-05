@@ -27,28 +27,38 @@ export async function importCsv(csv) {
 
   for (const [i, row] of rows.entries()) {
     const line = i + 2;
-    const name = pick(row, 'name', 'fullname')
+    let name = pick(row, 'name', 'fullname')
       || [pick(row, 'firstname'), pick(row, 'lastname')].filter(Boolean).join(' ');
-    const country = pick(row, 'country', 'countryregion', 'ipcountry');
-    const rawPhone = pick(row, 'phone', 'phonenumber', 'mobilephonenumber', 'mobile');
+    if (/^[\d\s+()-]+$/.test(name)) name = ''; // HubSpot sometimes puts the phone in Name
+    const country = pick(row, 'country', 'countryregion', 'countryfield', 'ipcountry');
+    const rawPhone = pick(row, 'phone', 'phonenumber', 'mobilephonenumber', 'mobile') || (name ? '' : pick(row, 'name'));
     const hsId = pick(row, 'recordid', 'hubspotcontactid', 'contactid', 'id');
+    // Everything else worth showing on the call card until HubSpot sync lands (plan s14 defers write-back).
+    const link = pick(row, 'hubspotlink', 'recordurl', 'url');
+    const extra = Object.fromEntries(Object.entries({
+      email: pick(row, 'email'), company: pick(row, 'company', 'companyname', 'associatedcompany'),
+      leadStage: pick(row, 'leadstage', 'leadstatus'), lifecycle: pick(row, 'lifecyclestage'),
+      origin: pick(row, 'origintier', 'originalsource', 'source'), title: pick(row, 'jobtitle'),
+      hubspotUrl: /^https?:\/\//.test(link) ? link : '',
+    }).filter(([, v]) => v));
 
     const resolved = resolveLead({ country, phone: rawPhone });
     const phone = normalizePhone(rawPhone, resolved?.region);
     if (!phone) {
-      const why = /e+/i.test(String(rawPhone)) ? ' (Excel turned it into scientific notation - re-export from HubSpot and upload without opening in Excel)' : '';
+      const why = /\d\.?\d*e\+\d+/i.test(String(rawPhone)) ? ' (Excel turned it into scientific notation - re-export from HubSpot and upload without opening in Excel)' : '';
       result.skipped.push({ line, reason: 'unusable phone: ' + JSON.stringify(rawPhone) + why }); continue;
     }
     if (!resolved) result.warnings.push({ line, phone, reason: 'no timezone for country ' + JSON.stringify(country) + '; imported but ineligible until fixed' });
 
     const { rows: [r] } = await q(
-      `INSERT INTO leads (hubspot_contact_id, name, phone, country, utc_offset, segment)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO leads (hubspot_contact_id, name, phone, country, utc_offset, segment, extra)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (hubspot_contact_id) DO UPDATE
-         SET name = EXCLUDED.name, phone = EXCLUDED.phone, country = EXCLUDED.country,
-             utc_offset = EXCLUDED.utc_offset, segment = EXCLUDED.segment
+         SET name = coalesce(EXCLUDED.name, leads.name), phone = EXCLUDED.phone, country = coalesce(EXCLUDED.country, leads.country),
+             utc_offset = coalesce(EXCLUDED.utc_offset, leads.utc_offset), segment = EXCLUDED.segment,
+             extra = leads.extra || EXCLUDED.extra
        RETURNING (xmax = 0) AS inserted`,
-      [hsId || 'manual-' + phone, name || null, phone, country || null, resolved?.offset ?? null, segmentFor(resolved?.region)]);
+      [hsId || 'manual-' + phone, name || null, phone, country || null, resolved?.offset ?? null, segmentFor(resolved?.region), JSON.stringify(extra)]);
     r.inserted ? result.inserted++ : result.updated++;
   }
   return result;

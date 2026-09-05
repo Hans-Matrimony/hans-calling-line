@@ -11,7 +11,7 @@ const LOCAL_HOUR = `EXTRACT(HOUR FROM (now() AT TIME ZONE 'UTC') + (l.utc_offset
  * chose that time. IGNORE_WINDOWS=true skips them for everyone (plumbing test at any hour).
  * Cancelled loser legs are not attempts and do not count for hour-variance.
  */
-export async function claimLeads(limit, segment = null) {
+function eligibleWhere(segment) {
   const where = [`l.status IN ('queued', 'later')`, `l.next_call_at <= now()`, `l.attempt_count < ${MAX_ATTEMPTS}`];
   if (!IGNORE_WINDOWS) {
     where.push(`(l.status = 'later' OR (
@@ -22,14 +22,31 @@ export async function claimLeads(limit, segment = null) {
         WHERE c.lead_id = l.id AND c.disposition IS DISTINCT FROM 'cancelled'
           AND EXTRACT(HOUR FROM (c.started_at AT TIME ZONE 'UTC') + (l.utc_offset * interval '1 hour')) = ${LOCAL_HOUR})))`);
   }
+  if (segment) where.push('l.segment = $2');
+  return where.join(' AND ');
+}
+
+/** Read-only preview of what the next burst would pick ("Up next" panel). Same rules as claimLeads. */
+export async function peekLeads(limit, segment = null) {
   const params = [limit];
-  if (segment) { params.push(segment); where.push('l.segment = $2'); }
+  if (segment) params.push(segment);
+  const { rows } = await q(
+    `SELECT l.id, l.name, l.phone, l.country, l.segment, l.utc_offset, l.attempt_count, l.status, l.next_call_at, l.extra,
+            (SELECT p.disposition FROM calls p WHERE p.lead_id = l.id AND p.disposition IS NOT NULL ORDER BY p.started_at DESC LIMIT 1) AS last_outcome
+     FROM leads l WHERE ${eligibleWhere(segment)} ORDER BY l.next_call_at ASC LIMIT $1`, params);
+  return rows;
+}
+
+export async function claimLeads(limit, segment = null) {
+  const where = eligibleWhere(segment);
+  const params = [limit];
+  if (segment) params.push(segment);
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(
-      `SELECT l.* FROM leads l WHERE ${where.join(' AND ')}
+      `SELECT l.* FROM leads l WHERE ${where}
        ORDER BY l.next_call_at ASC LIMIT $1 FOR UPDATE OF l SKIP LOCKED`, params);
     if (rows.length) await client.query(`UPDATE leads SET status = 'in_flight' WHERE id = ANY($1)`, [rows.map((r) => r.id)]);
     await client.query('COMMIT');
@@ -50,8 +67,9 @@ export function releaseLead(leadId, outcome, laterAt = null) {
                 WHERE id = $1`, [leadId]);
     case 'later': // rep-picked datetime, does not consume an attempt
       return q(`UPDATE leads SET status = 'later', next_call_at = $2, last_call_at = now() WHERE id = $1`, [leadId, laterAt]);
-    case 'cancelled': // losing burst leg: straight back to the queue, nothing consumed
-      return q(`UPDATE leads SET status = 'queued' WHERE id = $1`, [leadId]);
+    case 'cancelled': // losing burst leg: back to the queue, nothing consumed. 10 min cooldown so the
+      // lead is not rung again by the very next burst (seen live: two missed calls 20 s apart).
+      return q(`UPDATE leads SET status = 'queued', next_call_at = GREATEST(next_call_at, now() + interval '10 minutes') WHERE id = $1`, [leadId]);
     case 'invalid': // dead number (unallocated / invalid): stop the lead rather than retry it 6 times
       return q(`UPDATE leads SET status = 'stopped', last_call_at = now(), attempt_count = attempt_count + 1 WHERE id = $1`, [leadId]);
     default:
@@ -59,17 +77,29 @@ export function releaseLead(leadId, outcome, laterAt = null) {
   }
 }
 
-/** Caller ID for a region, honouring the 50/number/day cap (plan s5). Falls back to any
- *  configured number so today's test can dial India leads from +44/+1 before +91 clears. */
-export async function pickFromNumber(region) {
-  const env = fromNumbersByRegion();
-  const order = [...new Set([env[region], env.us, env.eu, env.india].filter(Boolean))];
-  const used = await usedTodayByNumber();
-  return order.find((n) => (used[n] ?? 0) < DAILY_CAP_PER_NUMBER) ?? null;
+/** Configured caller IDs as a flat list. Each FROM_NUMBER_* may hold several comma-separated E.164
+ *  numbers; within a region they are rotated (least-used-today first) to spread load and to avoid one
+ *  number firing every burst, which reads as spam (plan s5). */
+export function configuredNumbers() {
+  const byRegion = { india: process.env.FROM_NUMBER_INDIA, eu: process.env.FROM_NUMBER_EU, us: process.env.FROM_NUMBER_US };
+  const out = [];
+  for (const [region, raw] of Object.entries(byRegion))
+    for (const n of String(raw ?? '').split(',').map((s) => s.trim()).filter(Boolean))
+      out.push({ number: n, region });
+  return out;
 }
 
-export const fromNumbersByRegion = () =>
-  ({ india: process.env.FROM_NUMBER_INDIA, eu: process.env.FROM_NUMBER_EU, us: process.env.FROM_NUMBER_US });
+/** Caller ID for a region, honouring the 50/number/day cap (plan s5). Picks the least-used number in
+ *  the region; falls back to the least-used number anywhere so India dials from +1/+44 before +91 clears. */
+export async function pickFromNumber(region) {
+  const all = configuredNumbers();
+  const used = await usedTodayByNumber();
+  const leastUsed = (list) => list
+    .filter((n) => (used[n.number] ?? 0) < DAILY_CAP_PER_NUMBER)
+    .sort((a, b) => (used[a.number] ?? 0) - (used[b.number] ?? 0))[0];
+  const pick = leastUsed(all.filter((n) => n.region === region)) ?? leastUsed(all.filter((n) => n.region !== region));
+  return pick?.number ?? null;
+}
 
 /** { '+1302...': 12, ... } dials placed today per caller ID (cancelled legs included: they were placed). */
 export async function usedTodayByNumber() {
@@ -81,8 +111,8 @@ export async function usedTodayByNumber() {
 /** Every configured caller ID with today's usage, for the manual dialer's dropdown. */
 export async function listFromNumbers() {
   const used = await usedTodayByNumber();
-  return Object.entries(fromNumbersByRegion()).filter(([, n]) => n)
-    .map(([region, number]) => ({ number, region, usedToday: used[number] ?? 0, cap: DAILY_CAP_PER_NUMBER, available: (used[number] ?? 0) < DAILY_CAP_PER_NUMBER }));
+  return configuredNumbers()
+    .map(({ number, region }) => ({ number, region, usedToday: used[number] ?? 0, cap: DAILY_CAP_PER_NUMBER, available: (used[number] ?? 0) < DAILY_CAP_PER_NUMBER }));
 }
 
 /** Safety net: a lead left in_flight with no call in the last 2h (rep closed the tab mid-call and

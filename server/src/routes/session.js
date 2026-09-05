@@ -103,8 +103,16 @@ router.post('/dial', async (req, res) => {
 router.post('/hangup-lead', async (req, res) => {
   const burstId = activeBurst.get(req.userId);
   if (!burstId) return res.status(409).json({ error: 'nothing to hang up' });
-  const { rows: [b] } = await q('SELECT c.telnyx_call_id FROM bursts b JOIN calls c ON c.id = b.winner_call_id WHERE b.id = $1', [burstId]);
-  if (b?.telnyx_call_id) { await hangup(b.telnyx_call_id); return res.json({ ok: true, live: true }); } // webhook -> call:ended
+  const { rows: [b] } = await q(
+    `SELECT c.id, c.lead_id, c.telnyx_call_id, EXTRACT(EPOCH FROM (now() - c.answered_at))::int AS dur
+     FROM bursts b JOIN calls c ON c.id = b.winner_call_id WHERE b.id = $1`, [burstId]);
+  if (b?.telnyx_call_id) {
+    await hangup(b.telnyx_call_id);
+    // Move the UI to 'ended' now instead of waiting on the hangup webhook, so the red button never lingers.
+    // The webhook's onHangup coalesces the same duration and re-emits; the client handles the repeat.
+    emitToUser(req.userId, 'call:ended', { callId: b.id, leadId: b.lead_id, duration: b.dur ?? 0, cause: 'rep_hangup' });
+    return res.json({ ok: true, live: true });
+  }
   await cancelOpenLegs(burstId);
   activeBurst.delete(req.userId);
   await stopRepAudio(req.userId); // nothing is ringing any more: silence the tick
@@ -114,15 +122,17 @@ router.post('/hangup-lead', async (req, res) => {
 
 // Disposition after the call (plan s7). Rep-controlled; this is what unblocks the next burst.
 router.post('/disposition', async (req, res) => {
-  const { callId, outcome, laterAt } = req.body ?? {};
+  const { callId, outcome, laterAt, notes } = req.body ?? {};
   if (!['connected', 'no_answer', 'later'].includes(outcome)) return res.status(400).json({ error: 'bad outcome' });
   if (outcome === 'later' && !laterAt) return res.status(400).json({ error: 'laterAt (ISO datetime) required' });
   const { rows: [c] } = await q(
     'SELECT c.id, c.lead_id, c.burst_id FROM calls c JOIN bursts b ON b.id = c.burst_id WHERE c.id = $1 AND b.user_id = $2',
     [callId, req.userId]);
   if (!c) return res.status(404).json({ error: 'call not found' });
-  await q('UPDATE calls SET disposition = $2 WHERE id = $1', [c.id, outcome]);
-  await releaseLead(c.lead_id, outcome, laterAt ?? null);
+  const note = String(notes ?? '').trim().slice(0, 2000) || null;
+  // Idempotent: a repeat submit for the same call (double-click, second tab) is a no-op, not a second attempt.
+  const { rowCount } = await q('UPDATE calls SET disposition = $2, notes = $3 WHERE id = $1 AND disposition IS NULL', [c.id, outcome, note]);
+  if (rowCount) await releaseLead(c.lead_id, outcome, laterAt ?? null);
   if (activeBurst.get(req.userId) === c.burst_id) activeBurst.delete(req.userId);
   res.json({ ok: true });
 });

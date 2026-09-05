@@ -3,6 +3,9 @@ import type { TelnyxRTC, Call, INotification } from '@telnyx/webrtc';
 
 export type SoftphoneStatus = 'off' | 'connecting' | 'ready' | 'in_call' | 'error';
 
+const EVENTS = ['telnyx.ready', 'telnyx.error', 'telnyx.socket.error', 'telnyx.socket.close', 'telnyx.notification'] as const;
+const LOGIN_TIMEOUT_MS = 20000;
+
 /**
  * Browser audio (plan s9). Logs the Telnyx WebRTC client in with a short-lived JWT and auto-answers
  * the rep leg the server dials to sip:<sip_username>@sip.telnyx.com. The leg stays open all session;
@@ -15,24 +18,31 @@ export function useSoftphone() {
   const [error, setError] = useState<string | null>(null);
   const client = useRef<TelnyxRTC | null>(null);
   const call = useRef<Call | null>(null);
+  const connecting = useRef(false); // errors are fatal for connect() only while this is true
 
   const disconnect = useCallback(() => {
-    try { call.current?.hangup(); } catch { /* already gone */ }
-    try { client.current?.disconnect(); } catch { /* already gone */ }
-    call.current = null; client.current = null;
+    // The SDK's own disconnect() purges and BYEs every call still live and skips ones the server already
+    // ended - so no explicit call.hangup() here: sending our own BYE first made the SDK send a second one
+    // and log "telnyx_rtc.bye failed!". Handlers come off first so a torn-down client cannot report back.
+    const c = client.current;
+    client.current = null; call.current = null; connecting.current = false;
+    if (c) {
+      for (const ev of EVENTS) { try { c.off(ev); } catch { /* already gone */ } }
+      try { c.disconnect(); } catch { /* already gone */ }
+    }
     setStatus('off'); setMuted(false);
   }, []);
 
   const connect = useCallback(async (token: string) => {
     disconnect();
-    setStatus('connecting'); setError(null);
+    setStatus('connecting'); setError(null); connecting.current = true;
     // Ask for the mic now so the auto-answer below is never stuck behind a permission prompt.
     try {
       const probe = await navigator.mediaDevices.getUserMedia({ audio: true });
       probe.getTracks().forEach((t) => t.stop());
     } catch (e) {
-      setStatus('error');
-      const why = (e as Error).name === 'NotAllowedError' ? 'microphone blocked - allow it for this site and try again' : 'no microphone: ' + (e as Error).message;
+      setStatus('error'); connecting.current = false;
+      const why = (e as Error).name === 'NotAllowedError' ? 'Microphone blocked - allow it for this site and try again.' : 'No microphone: ' + (e as Error).message;
       setError(why); throw new Error(why);
     }
 
@@ -40,21 +50,38 @@ export function useSoftphone() {
     const c = new TelnyxRTC({ login_token: token });
     c.remoteElement = 'remoteMedia';
     client.current = c;
+    const isCurrent = () => client.current === c; // a reconnect swaps the client; the old one's late events are ignored
 
     await new Promise<void>((resolve, reject) => {
-      // The SDK wraps errors: telnyx.error -> { error: { message, code }, sessionId }.
-      const fail = (kind: string, e: unknown) => {
-        const inner = (e as { error?: { message?: string; code?: string | number } })?.error ?? (e as { message?: string });
-        const msg = `${kind}: ${inner?.message ?? 'unknown'}${(inner as { code?: string | number })?.code != null ? ' (' + (inner as { code?: string | number }).code + ')' : ''}`;
-        console.error('[softphone]', kind, e);
-        setStatus('error'); setError(msg); reject(new Error(msg));
+      const fail = (text: string, e?: unknown) => {
+        console.warn('[softphone]', text, e ?? '');
+        setStatus('error'); setError(text); connecting.current = false; reject(new Error(text));
       };
-      c.on('telnyx.ready', () => { setStatus('ready'); resolve(); });
-      c.on('telnyx.error', (e: unknown) => fail('softphone error', e));
-      c.on('telnyx.socket.error', (e: unknown) => fail('cannot reach rtc.telnyx.com (firewall/VPN?)', e));
-      c.on('telnyx.socket.close', () => { call.current = null; setStatus('off'); });
+      // Belt and braces: whatever the SDK's event order, connect() settles, so the UI never wedges on `busy`.
+      const timer = setTimeout(() => { if (!isCurrent() || !connecting.current) return; disconnect(); fail('softphone: login timed out after 20s'); }, LOGIN_TIMEOUT_MS);
+      // The SDK wraps errors: telnyx.error -> { error: { message, code }, sessionId }. socket.error is a raw Event.
+      const describe = (e: unknown) => {
+        const inner = (e as { error?: { message?: string; code?: string | number } })?.error ?? (e as { message?: string });
+        const code = (inner as { code?: string | number })?.code;
+        return inner?.message ? `${inner.message}${code != null ? ' (' + code + ')' : ''}` : 'unknown';
+      };
+      const onError = (kind: string, e: unknown) => {
+        if (!isCurrent()) return;
+        const text = `${kind}: ${describe(e)}`;
+        if (connecting.current) { clearTimeout(timer); fail(text, e); return; } // login failed: fatal for connect()
+        console.warn('[softphone]', text, e); setError(text);           // live client: always surfaced
+      };
+      c.on('telnyx.ready', () => { if (!isCurrent()) return; clearTimeout(timer); connecting.current = false; setStatus('ready'); resolve(); });
+      c.on('telnyx.error', (e: unknown) => onError('softphone error', e));
+      c.on('telnyx.socket.error', (e: unknown) => onError('cannot reach rtc.telnyx.com (firewall/VPN?)', e));
+      c.on('telnyx.socket.close', () => {
+        if (!isCurrent()) return;
+        if (connecting.current) { clearTimeout(timer); fail('softphone: connection closed before login'); return; }
+        call.current = null; setStatus('off');
+      });
       c.on('telnyx.notification', (n: INotification) => {
-        if (n.type === 'userMediaError') { setStatus('error'); setError('microphone unavailable: ' + (n.error?.message ?? '')); return; }
+        if (!isCurrent()) return;
+        if (n.type === 'userMediaError') { setStatus('error'); setError('Microphone unavailable: ' + (n.error?.message ?? '')); return; }
         if (n.type !== 'callUpdate' || !n.call) return;
         const k = n.call;
         switch (k.state) {

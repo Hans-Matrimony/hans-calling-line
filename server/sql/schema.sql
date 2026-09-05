@@ -51,3 +51,11 @@ CREATE TABLE IF NOT EXISTS calls (
 ALTER TABLE users ADD COLUMN IF NOT EXISTS audio_mode TEXT NOT NULL DEFAULT 'phone' CHECK (audio_mode IN ('phone','browser'));
 ALTER TABLE users ADD COLUMN IF NOT EXISTS telnyx_credential_id TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS sip_username TEXT;
+
+-- Rep's note per call, saved with the disposition; shown as "last note" next time the lead comes up.
+-- Will map to a HubSpot note/property once HubSpot write-back lands (after the Monday measurement).
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS notes TEXT;
+
+-- Everything else the CSV knows about a lead (email, company, lead stage, lifecycle, origin, HubSpot URL),
+-- shown on the call card. Replaced by live HubSpot properties once sync lands.
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS extra JSONB NOT NULL DEFAULT '{}'::jsonb;

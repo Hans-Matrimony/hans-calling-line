@@ -18,12 +18,12 @@ export default function Login({ onDone }: { onDone: () => void }) {
 
   return (
     <main className="center">
-      <form className="card login" onSubmit={submit}>
-        <h1>Eazybe Dialer</h1>
-        <label>Email<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus required /></label>
-        <label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required /></label>
+      <form className="login" onSubmit={submit}>
+        <div className="brand"><span className="brand-name">Eazybe</span><span className="brand-sub">dialer</span></div>
+        <label>Email<input className="field" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus required autoComplete="username" /></label>
+        <label>Password<input className="field" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" /></label>
         {err && <p className="err">{err}</p>}
-        <button className="primary" disabled={busy}>{busy ? 'Signing in...' : 'Sign in'}</button>
+        <button className="btn btn-blue btn-lg" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
       </form>
     </main>
   );
