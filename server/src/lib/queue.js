@@ -9,10 +9,11 @@ const LOCAL_HOUR = `EXTRACT(HOUR FROM (now() AT TIME ZONE 'UTC') + (l.utc_offset
  * Eligible: queued/later, next_call_at due, attempts left, inside the lead-local window,
  * never dialed at this local hour before. 'later' leads skip the two time rules: the rep
  * chose that time. IGNORE_WINDOWS=true skips them for everyone (plumbing test at any hour).
- * Cancelled loser legs are not attempts and do not count for hour-variance.
+. * Cancelled loser legs are not attempts and do not count for hour-variance.
+ * Always scoped to the rep's own leads ($2): leads are never shared across the team.
  */
 function eligibleWhere(segment) {
-  const where = [`l.status IN ('queued', 'later')`, `l.next_call_at <= now()`, `l.attempt_count < ${MAX_ATTEMPTS}`];
+  const where = [`l.user_id = $2`, `l.status IN ('queued', 'later')`, `l.next_call_at <= now()`, `l.attempt_count < ${MAX_ATTEMPTS}`];
   if (!IGNORE_WINDOWS) {
     where.push(`(l.status = 'later' OR (
       l.utc_offset IS NOT NULL
@@ -22,13 +23,13 @@ function eligibleWhere(segment) {
         WHERE c.lead_id = l.id AND c.disposition IS DISTINCT FROM 'cancelled'
           AND EXTRACT(HOUR FROM (c.started_at AT TIME ZONE 'UTC') + (l.utc_offset * interval '1 hour')) = ${LOCAL_HOUR})))`);
   }
-  if (segment) where.push('l.segment = $2');
+  if (segment) where.push('l.segment = $3');
   return where.join(' AND ');
 }
 
 /** Read-only preview of what the next burst would pick ("Up next" panel). Same rules as claimLeads. */
-export async function peekLeads(limit, segment = null) {
-  const params = [limit];
+export async function peekLeads(userId, limit, segment = null) {
+  const params = [limit, userId];
   if (segment) params.push(segment);
   const { rows } = await q(
     `SELECT l.id, l.name, l.phone, l.country, l.segment, l.utc_offset, l.attempt_count, l.status, l.next_call_at, l.extra,
@@ -37,9 +38,9 @@ export async function peekLeads(limit, segment = null) {
   return rows;
 }
 
-export async function claimLeads(limit, segment = null) {
+export async function claimLeads(userId, limit, segment = null) {
   const where = eligibleWhere(segment);
-  const params = [limit];
+  const params = [limit, userId];
   if (segment) params.push(segment);
 
   const client = await pool.connect();

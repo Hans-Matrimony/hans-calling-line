@@ -105,3 +105,16 @@ Rep workflow in HubSpot: open a contact you own → tick "Eazybe · Dial queue" 
 - JustCall dialer audit (2026-09-06): worth adding later — Activity search box; wrap-up time as a setting (needed for
   Auto dial anyway); mic/speaker device pickers with Test (half-day, prevents "no audio" tickets). Skip: SMS, voicemail,
   recording, scripts, availability toggle, data-centre routing, Team contacts, click-to-dial from web pages.
+
+## 10. Auto dial / Burst dial (built 2026-09-07)
+
+- **Per-rep leads:** `leads.user_id`. Queue selection, Up next, stats, activity and CSV import are scoped to the
+  signed-in rep; a CSV uploaded by rep B moves any shared HubSpot ids to B (latest upload owns). Existing 248
+  leads were backfilled to Himanshu. New reps: `node server/scripts/add-user.js`.
+- **One queue per rep, both modes draw from it** (user choice). `POST /api/session/burst {legs: 1|2}`.
+- **Auto dial** = one lead; **Burst dial** = two, first to answer wins, loser cancelled and retried later.
+- **Next is manual** (user choice): after the outcome is saved the rep presses "Next lead" / "Next burst".
+  No wrap-up countdown.
+- Pages: hero + Start dialing + Upload CSV + "Your queue" (ready now / in queue / next few) + **the tape** —
+  one tile per dial this run, coloured by outcome. In a call: run strip (tape, burst race chips, lead card) +
+  handset in-call view. The Dialer tab is not auto-selected while the rep is on a campaign page.

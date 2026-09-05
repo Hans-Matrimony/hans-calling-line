@@ -21,7 +21,7 @@ export type Outcome = 'connected' | 'no_answer' | 'later';
 export type EventKind = 'sys' | 'dialing' | 'answered' | 'connected' | 'no_answer' | 'later' | 'cancelled' | 'failed' | 'ended' | 'error';
 export type ActivityEvent = { id: string; at: Date; kind: EventKind; text: string; sub?: string; phone?: string };
 type SessionState = { repUp: boolean; burstId: number | null };
-type ImportResult = { inserted: number; updated: number; skipped: { line: number; reason: string }[]; warnings: { line: number; reason: string }[] };
+export type ImportResult = { inserted: number; updated: number; skipped: { line: number; reason: string }[]; warnings: { line: number; reason: string }[] };
 type ActivityRow = { callId: number; name: string | null; phone: string; country: string | null; from: string | null; startedAt: string; answered: boolean; duration: number | null; disposition: string | null; notes: string | null; burstWon: boolean };
 
 const label = (name: string | null, phone: string) => name || phone;
@@ -132,10 +132,10 @@ export function useDialer(me: Me) {
     if (softphone.status === 'off' && rep === 'connected') { setRep('disconnected'); push('error', 'audio dropped', 'softphone disconnected — connect again'); }
   }, [softphone.status, rep, push]);
 
-  const run = useCallback(async (what: string, fn: () => Promise<unknown>) => {
+  const run = useCallback(async <T,>(what: string, fn: () => Promise<T>): Promise<T | undefined> => {
     setBusy(true); setErr(null);
-    try { await fn(); }
-    catch (e) { const m = (e as Error).message; setErr(m); push('error', what + ' failed', m); }
+    try { return await fn(); }
+    catch (e) { const m = (e as Error).message; setErr(m); push('error', what + ' failed', m); return undefined; }
     finally { setBusy(false); }
   }, [push]);
 
@@ -148,7 +148,8 @@ export function useDialer(me: Me) {
     }),
     // Browser hangs up first so the SDK never BYEs a leg the server already ended; the server call then just clears state.
     disconnect: () => run('disconnect audio', async () => { softphone.disconnect(); await post('/api/session/disconnect'); }),
-    startCalling: () => run('start calling', () => post('/api/session/burst')),
+    // legs 1 = Auto dial (one lead), 2 = Burst dial (first to answer wins). Resolves undefined when the server refused.
+    startCalling: (legs: 1 | 2) => run('start calling', () => post('/api/session/burst', { legs })),
     manualDial: (to: string, from: string) => run('call', () => post('/api/session/dial', { to, from })),
     hangupLead: () => run('hang up', () => post('/api/session/hangup-lead')),
     // DTMF while bridged (IVR menus, extensions). Not through run(): a keypress must never flip `busy`.
@@ -170,6 +171,7 @@ export function useDialer(me: Me) {
       sys(`imported ${r.inserted} new, ${r.updated} updated, ${r.skipped.length} skipped, ${r.warnings.length} warnings`);
       for (const s of [...r.skipped, ...r.warnings].slice(0, 5)) sys(`line ${s.line}: ${s.reason}`);
       refresh();
+      return r;
     }),
   };
 }

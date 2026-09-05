@@ -64,11 +64,13 @@ function guardBurst(req, res) {
   return true;
 }
 
-// Start calling: one burst of LEGS_PER_BURST different leads. Optional body.segment narrows the queue.
+// One burst from the rep's own queue: body.legs 1 = Auto dial (one lead), otherwise LEGS_PER_BURST = Burst dial.
+// Optional body.segment narrows the queue.
 router.post('/burst', async (req, res) => {
   if (!guardBurst(req, res)) return;
   await sweepStuckLeads();
-  const leads = await claimLeads(LEGS_PER_BURST, req.body?.segment ?? null);
+  const legs = req.body?.legs === 1 ? 1 : LEGS_PER_BURST;
+  const leads = await claimLeads(req.userId, legs, req.body?.segment ?? null);
   if (!leads.length) return res.status(404).json({ error: 'no eligible leads right now' });
   try { res.json(await startBurst(req.userId, leads)); }
   catch (e) { res.status(502).json({ error: e.message }); }
@@ -91,10 +93,10 @@ router.post('/dial', async (req, res) => {
 
   const resolved = resolveLead({ country: null, phone: to });
   const { rows: [lead] } = await q(
-    `INSERT INTO leads (hubspot_contact_id, phone, utc_offset, segment, status)
-     VALUES ($1, $2, $3, $4, 'in_flight')
-     ON CONFLICT (hubspot_contact_id) DO UPDATE SET status = 'in_flight' RETURNING *`,
-    ['manual-' + to, to, resolved?.offset ?? null, segmentFor(resolved?.region)]);
+    `INSERT INTO leads (hubspot_contact_id, phone, utc_offset, segment, status, user_id)
+     VALUES ($1, $2, $3, $4, 'in_flight', $5)
+     ON CONFLICT (hubspot_contact_id) DO UPDATE SET status = 'in_flight', user_id = $5 RETURNING *`,
+    ['manual-' + to, to, resolved?.offset ?? null, segmentFor(resolved?.region), req.userId]);
   try { res.json(await startBurst(req.userId, [lead], from)); }
   catch (e) { res.status(502).json({ error: e.message }); }
 });

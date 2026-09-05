@@ -4,12 +4,16 @@ import { useDialer, type Me } from '../lib/useDialer';
 import { prettyPhone } from '../lib/format';
 import CallCard from './CallCard';
 import Handset from './Handset';
+import Campaign from './Campaign';
 import UpNext from './UpNext';
 import Activity from './Activity';
 
-type Tab = 'dialer' | 'activity' | 'upnext';
+type Tab = 'dialer' | 'auto' | 'burst' | 'activity' | 'upnext';
+const TAB_IDS: Tab[] = ['dialer', 'auto', 'burst', 'activity', 'upnext'];
 const TABS: { id: Tab; label: string; icon: () => React.JSX.Element }[] = [
   { id: 'dialer', label: 'Dialer', icon: () => <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>{[5, 12, 19].flatMap((y) => [5, 12, 19].map((x) => <circle key={x + '-' + y} cx={x} cy={y} r="2" />))}</svg> },
+  { id: 'auto', label: 'Auto dial', icon: () => <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden><path d="M8 5v14l11-7z" /></svg> },
+  { id: 'burst', label: 'Burst dial', icon: () => <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden><path d="M4 5v14l8-7zM13 5v14l8-7z" /></svg> },
   { id: 'activity', label: 'Activity', icon: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg> },
   { id: 'upnext', label: 'Up next', icon: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M4 6h10M4 12h10M4 18h6" /><path d="M16 12h4m0 0-3-3m3 3-3 3" /></svg> },
 ];
@@ -17,7 +21,7 @@ const TABS: { id: Tab; label: string; icon: () => React.JSX.Element }[] = [
 /** Per-viewer UI preference: which tab was open. Never critical: falls back to the dialer. */
 function useTab(): [Tab, (t: Tab) => void] {
   const [tab, setTabState] = useState<Tab>('dialer');
-  useEffect(() => { try { const s = localStorage.getItem('eazybe.tab'); if (s === 'activity' || s === 'upnext') setTabState(s); } catch { /* private mode etc. */ } }, []);
+  useEffect(() => { try { const s = localStorage.getItem('eazybe.tab'); if (TAB_IDS.includes(s as Tab)) setTabState(s as Tab); } catch { /* private mode etc. */ } }, []);
   const setTab = (t: Tab) => { setTabState(t); try { localStorage.setItem('eazybe.tab', t); } catch { /* ignore */ } };
   return [tab, setTab];
 }
@@ -36,8 +40,11 @@ export default function Console({ me, onLogout }: { me: Me; onLogout: () => void
     d.connect();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // A call is never hidden behind a tab: dialing or a live lead brings the dialer forward so the card and outcome are in view.
-  useEffect(() => { if (d.phase === 'ringing' || d.phase === 'live') setTab('dialer'); }, [d.phase]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A call is never hidden behind a tab: dialing or a live lead brings the dialer forward so the card and outcome
+  // are in view - unless the rep is on Auto dial / Burst dial, which show the call themselves.
+  useEffect(() => {
+    if ((d.phase === 'ringing' || d.phase === 'live') && tab !== 'auto' && tab !== 'burst') setTab('dialer');
+  }, [d.phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Tap-to-dial from Up next / Activity: the number lands in the handset, the rep presses Call.
   const dialFrom = (phone: string) => { d.setPrefill(phone); setTab('dialer'); };
@@ -88,10 +95,12 @@ export default function Console({ me, onLogout }: { me: Me; onLogout: () => void
             {d.softphone.error && <p className="err">{d.softphone.error}</p>}
           </div>
         )}
+        {tab === 'auto' && <div className="page wide"><Campaign d={d} mode="auto" /></div>}
+        {tab === 'burst' && <div className="page wide"><Campaign d={d} mode="burst" /></div>}
         {tab === 'activity' && <div className="page"><Activity feed={d.feed} loaded={d.feedLoaded} onDial={dialFrom} /></div>}
         {tab === 'upnext' && <div className="page"><UpNext leads={d.upNext} queued={s?.queued} onDial={dialFrom} /></div>}
 
-        {tab !== 'dialer' && (
+        {(tab === 'activity' || tab === 'upnext') && (
           <footer className="bottombar">
             {d.fromNumbers.map((n) => (
               <span className="num" key={n.number} title={`${n.usedToday} of ${n.cap} dials today from this caller ID`}>

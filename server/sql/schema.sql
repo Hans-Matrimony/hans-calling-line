@@ -59,3 +59,9 @@ ALTER TABLE calls ADD COLUMN IF NOT EXISTS notes TEXT;
 -- Everything else the CSV knows about a lead (email, company, lead stage, lifecycle, origin, HubSpot URL),
 -- shown on the call card. Replaced by live HubSpot properties once sync lands.
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS extra JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+-- Leads belong to one rep (PLAN-v2: never shared across the team). Queue selection, Up next, stats and the
+-- activity feed are all scoped by it. Rows from before ownership existed go to the first rep, once.
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS user_id INT REFERENCES users(id);
+CREATE INDEX IF NOT EXISTS leads_owner_idx ON leads (user_id, status, next_call_at);
+UPDATE leads SET user_id = (SELECT id FROM users WHERE email = 'himanshu@eazybe.com') WHERE user_id IS NULL;

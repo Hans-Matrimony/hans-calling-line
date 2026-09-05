@@ -20,8 +20,9 @@ export function normalizePhone(raw, region) {
   return null;
 }
 
-/** Upsert leads from a CSV buffer. Re-importing never resets attempt_count / status. */
-export async function importCsv(csv) {
+/** Upsert leads from a CSV buffer into the uploading rep's own queue. Re-importing never resets
+ *  attempt_count / status; a lead uploaded again by another rep moves to that rep (latest upload owns it). */
+export async function importCsv(csv, userId) {
   const rows = parse(csv, { columns: (h) => h.map(key), skip_empty_lines: true, bom: true, trim: true });
   const result = { inserted: 0, updated: 0, skipped: [], warnings: [] };
 
@@ -51,14 +52,14 @@ export async function importCsv(csv) {
     if (!resolved) result.warnings.push({ line, phone, reason: 'no timezone for country ' + JSON.stringify(country) + '; imported but ineligible until fixed' });
 
     const { rows: [r] } = await q(
-      `INSERT INTO leads (hubspot_contact_id, name, phone, country, utc_offset, segment, extra)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO leads (hubspot_contact_id, name, phone, country, utc_offset, segment, extra, user_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (hubspot_contact_id) DO UPDATE
          SET name = coalesce(EXCLUDED.name, leads.name), phone = EXCLUDED.phone, country = coalesce(EXCLUDED.country, leads.country),
              utc_offset = coalesce(EXCLUDED.utc_offset, leads.utc_offset), segment = EXCLUDED.segment,
-             extra = leads.extra || EXCLUDED.extra
+             extra = leads.extra || EXCLUDED.extra, user_id = EXCLUDED.user_id
        RETURNING (xmax = 0) AS inserted`,
-      [hsId || 'manual-' + phone, name || null, phone, country || null, resolved?.offset ?? null, segmentFor(resolved?.region), JSON.stringify(extra)]);
+      [hsId || 'manual-' + phone, name || null, phone, country || null, resolved?.offset ?? null, segmentFor(resolved?.region), JSON.stringify(extra), userId]);
     r.inserted ? result.inserted++ : result.updated++;
   }
   return result;
