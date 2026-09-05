@@ -69,6 +69,9 @@ export function useSoftphone() {
         if (!isCurrent()) return;
         const text = `${kind}: ${describe(e)}`;
         if (connecting.current) { clearTimeout(timer); fail(text, e); return; } // login failed: fatal for connect()
+        // 44003 "Failed to hang up cleanly": the SDK BYEd a leg the server had already ended (previous lead gone while
+        // the rep leg sits parked). The call is over either way and there is nothing for the rep to do - keep it off the screen.
+        if (/Failed to hang up cleanly/i.test(text) || /44003/.test(text)) { console.warn('[softphone] benign:', text, e); return; }
         console.warn('[softphone]', text, e); setError(text);           // live client: always surfaced
       };
       c.on('telnyx.ready', () => { if (!isCurrent()) return; clearTimeout(timer); connecting.current = false; setStatus('ready'); resolve(); });
@@ -85,8 +88,8 @@ export function useSoftphone() {
         if (n.type !== 'callUpdate' || !n.call) return;
         const k = n.call;
         switch (k.state) {
-          case 'ringing': call.current = k; k.answer(); break;       // the rep leg: answer, stay on it
-          case 'active': call.current = k; setStatus('in_call'); break;
+          case 'ringing': call.current = k; setError(null); k.answer(); break;       // the rep leg: answer, stay on it; a stale error from the last call is history
+          case 'active': call.current = k; setError(null); setStatus('in_call'); break;
           case 'hangup': case 'destroy': call.current = null; setMuted(false); setStatus((s) => (s === 'off' ? s : 'ready')); break;
         }
       });
