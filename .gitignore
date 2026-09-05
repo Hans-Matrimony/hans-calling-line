@@ -1,0 +1,7 @@
+node_modules/
+.env
+.next/
+data/*.csv
+out/
+.env.local
+.claude/settings.local.json

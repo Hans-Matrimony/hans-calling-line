@@ -1,0 +1,11 @@
+{
+  "name": "eazybe-dialer",
+  "private": true,
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "npm ci --prefix server && npm ci --prefix client && npm run build --prefix client",
+    "start": "npm start --prefix server",
+    "dev:server": "npm run dev --prefix server",
+    "dev:client": "npm run dev --prefix client"
+  }
+}
