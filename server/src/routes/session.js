@@ -7,7 +7,7 @@ import { claimLeads, releaseLead, pickFromNumber, sweepStuckLeads, listFromNumbe
 import { resolveLead, segmentFor } from '../lib/countries.js';
 import { normalizePhone } from '../lib/import.js';
 import { startBurst, cancelOpenLegs, stopRepAudio } from '../lib/burst.js';
-import { dialRep, hangup, ensureCredential, webrtcToken, sipDestination } from '../telnyx.js';
+import { dialRep, hangup, ensureCredential, webrtcToken, sipDestination, sendDtmf } from '../telnyx.js';
 import { LEGS_PER_BURST, DAILY_CAP_PER_NUMBER } from '../config.js';
 
 export const router = express.Router();
@@ -96,6 +96,16 @@ router.post('/dial', async (req, res) => {
      ON CONFLICT (hubspot_contact_id) DO UPDATE SET status = 'in_flight' RETURNING *`,
     ['manual-' + to, to, resolved?.offset ?? null, segmentFor(resolved?.region)]);
   try { res.json(await startBurst(req.userId, [lead], from)); }
+  catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// Handset dialpad while on a call: tones go out on the rep leg, so the lead's side hears them.
+router.post('/dtmf', async (req, res) => {
+  const digits = String(req.body?.digits ?? '').replace(/[^0-9*#]/g, '').slice(0, 32);
+  if (!digits) return res.status(400).json({ error: 'digits 0-9 * # only' });
+  const { rows: [u] } = await q('SELECT telnyx_session_call_id FROM users WHERE id = $1', [req.userId]);
+  if (!activeBurst.has(req.userId) || !u?.telnyx_session_call_id) return res.status(409).json({ error: 'no call to send tones on' });
+  try { await sendDtmf(u.telnyx_session_call_id, digits); res.json({ ok: true }); }
   catch (e) { res.status(502).json({ error: e.message }); }
 });
 

@@ -52,6 +52,8 @@ export const stopPlayback = (leg) => telnyx().calls.actions.stopPlayback(leg, { 
 export const bridge = (repLeg, leadLeg) =>
   // park_after_unbridge: without it Telnyx hangs up the rep leg too when the lead hangs up (plan s8: rep leg stays open all session).
   telnyx().calls.actions.bridge(repLeg, { call_control_id_to_bridge_with: leadLeg, prevent_double_bridge: true, park_after_unbridge: 'self' });
+/** Dialpad during a bridged call. Tones sent on the rep leg are heard by the other end (IVR menus, extensions). */
+export const sendDtmf = (leg, digits) => telnyx().calls.actions.sendDtmf(leg, { digits });
 
 /** Browser audio (plan s9). One on-demand telephony credential per user, created on first use and
  *  kept forever; the browser only ever sees a 24h JWT minted from it, never the SIP password.
