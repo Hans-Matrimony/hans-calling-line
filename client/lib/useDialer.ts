@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import { API, api, post } from './api';
 import { useSoftphone } from './useSoftphone';
@@ -9,24 +9,30 @@ export type Card = {
   utcOffset: string | number | null; hubspotId: string | null; extra: LeadExtra; attempt: number; lastOutcome: string | null; lastNote: string | null;
 };
 export type LeadExtra = { email?: string; company?: string; leadStage?: string; lifecycle?: string; origin?: string; title?: string; hubspotUrl?: string; priority?: number };
-export type Stats = { dialed_today: number; connected_today: number; talk_seconds_today: number; queued: number };
+export type Stats = { dialed_today: number; connected_today: number; talk_seconds_today: number; queued: number; ready: number; next_open_at: string | null; waiting_gap: number; waiting_window: number };
 export type LastCall = { phone: string; name: string | null; from: string | null; at: Date; outcome: string | null };
-export type LegStatus = 'ringing' | 'answered' | 'cancelled';
+export type LegStatus = 'ringing' | 'answered' | 'cancelled' | 'abandoned';
 export type Leg = { leadId: number; name: string | null; phone: string; country: string | null; from: string; status: LegStatus };
 export type NextLead = { id: number; name: string | null; phone: string; country: string | null; segment: string; utc_offset: string | null; attempt_count: number; status: string; last_outcome: string | null; extra: LeadExtra };
 export type FromNumber = { number: string; region: 'india' | 'eu' | 'us'; usedToday: number; cap: number; available: boolean };
 export type Rep = 'disconnected' | 'ringing' | 'connected';
 export type Phase = 'idle' | 'ringing' | 'live' | 'ended';
-export type Outcome = 'connected' | 'no_answer' | 'later';
+export type Outcome = 'connected' | 'no_answer' | 'later' | 'invalid';
 export type EventKind = 'sys' | 'dialing' | 'answered' | 'connected' | 'no_answer' | 'later' | 'cancelled' | 'failed' | 'ended' | 'error';
 export type ActivityEvent = { id: string; at: Date; kind: EventKind; text: string; sub?: string; phone?: string };
-type SessionState = { repUp: boolean; burstId: number | null };
+export type Mode = 'auto' | 'burst';
+export type Run = { mode: Mode; since: Date; endAfter: boolean };
+export type LastRun = { mode: Mode; since: Date; until: Date };
+export type HeldBack = { name: string | null; phone: string; at: string };
+type SessionState = { repUp: boolean; burstId: number | null; phase: Phase; legs: Leg[]; card: Card | null; answeredAt: string | null; duration: number | null };
+type BurstLeg = { leadId: number; name: string | null; phone: string; disposition: string | null };
 export type ImportResult = { inserted: number; updated: number; skipped: { line: number; reason: string }[]; warnings: { line: number; reason: string }[] };
 type ActivityRow = { callId: number; name: string | null; phone: string; country: string | null; from: string | null; startedAt: string; answered: boolean; duration: number | null; disposition: string | null; notes: string | null; burstWon: boolean };
 
 const label = (name: string | null, phone: string) => name || phone;
 const FEED_MAX = 200;
 let seq = 0;
+const OUTCOME_TEXT: Record<Outcome, string> = { connected: 'Connected', no_answer: 'No answer', later: 'Call later', invalid: 'Wrong number' };
 
 /** Today's calls from the server become feed entries, so a page reload loses nothing. */
 function rowEvent(r: ActivityRow): ActivityEvent {
@@ -34,22 +40,24 @@ function rowEvent(r: ActivityRow): ActivityEvent {
   const at = new Date(r.startedAt);
   const id = 'c' + r.callId;
   switch (r.disposition) {
-    case 'connected': return { id, at, kind: 'connected', text: who, sub: `connected · ${r.duration ?? 0}s${r.notes ? ' · ' + r.notes : ''}` };
-    case 'later': return { id, at, kind: 'later', text: who, sub: `call later${r.notes ? ' · ' + r.notes : ''}` };
-    case 'no_answer': return { id, at, kind: 'no_answer', text: who, sub: r.answered ? `answered ${r.duration ?? 0}s, marked no answer` : 'no answer' };
-    case 'cancelled': return { id, at, kind: 'cancelled', text: who, sub: r.burstWon ? 'cancelled — other lead answered first' : 'cancelled — dialing stopped' };
-    case 'abandoned': return { id, at, kind: 'failed', text: who, sub: 'abandoned — answered while another lead was already on' };
-    case 'failed': return { id, at, kind: 'failed', text: who, sub: 'could not be dialed' };
+    case 'connected': return { id, at, kind: 'connected', text: who, sub: `Connected · ${r.duration ?? 0}s${r.notes ? ' · ' + r.notes : ''}` };
+    case 'later': return { id, at, kind: 'later', text: who, sub: `Call later${r.notes ? ' · ' + r.notes : ''}` };
+    case 'no_answer': return { id, at, kind: 'no_answer', text: who, sub: r.answered ? `Answered ${r.duration ?? 0}s, saved as no answer` : 'No answer' };
+    case 'cancelled': return { id, at, kind: 'cancelled', text: who, sub: r.burstWon ? 'Cancelled — the other lead answered first' : 'Cancelled — dialing stopped' };
+    case 'abandoned': return { id, at, kind: 'failed', text: who, sub: 'Picked up while you were already connecting — counts as an attempt' };
+    case 'invalid': return { id, at, kind: 'failed', text: who, sub: 'Wrong number' };
+    case 'failed': return { id, at, kind: 'failed', text: who, sub: 'Could not be dialed' };
     default:
-      if (r.answered && r.duration != null) return { id, at, kind: 'ended', text: who, sub: `ended ${r.duration}s — no outcome saved` };
-      return { id, at, kind: r.answered ? 'answered' : 'dialing', text: who, sub: r.answered ? 'on the line' : 'ringing' };
+      if (r.answered && r.duration != null) return { id, at, kind: 'ended', text: who, sub: `Ended ${r.duration}s — no outcome saved` };
+      return { id, at, kind: r.answered ? 'answered' : 'dialing', text: who, sub: r.answered ? 'On the line' : 'Ringing' };
   }
 }
-
 const rowToEvent = (r: ActivityRow): ActivityEvent => ({ ...rowEvent(r), phone: r.phone });
 
 /** All dialer state + Socket.IO wiring. Components are markup only. Audio is browser-only in the UI;
- *  the server still supports phone mode as the plan's fallback (mode:'phone' on /connect). */
+ *  the server still supports phone mode as the plan's fallback (mode:'phone' on /connect).
+ *  Call state is rebuilt from /api/session/state on load and on every socket reconnect, so a reload,
+ *  a tab switch or a server restart never strands a call. */
 export function useDialer(me: Me) {
   const softphone = useSoftphone();
   const [rep, setRep] = useState<Rep>('disconnected');
@@ -58,6 +66,7 @@ export function useDialer(me: Me) {
   const [card, setCard] = useState<Card | null>(null);
   const [answeredAt, setAnsweredAt] = useState<Date | null>(null);
   const [duration, setDuration] = useState<number | null>(null);
+  const [endCause, setEndCause] = useState<string | null>(null);   // why the last call ended: rep_hangup | bridge_failed | a Telnyx cause
   const [stats, setStats] = useState<Stats | null>(null);
   const [fromNumbers, setFromNumbers] = useState<FromNumber[]>([]);
   const [upNext, setUpNext] = useState<NextLead[] | null>(null); // null = loading
@@ -65,13 +74,29 @@ export function useDialer(me: Me) {
   const [feedLoaded, setFeedLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [note, setNote] = useState('');                       // shared by the handset Note tile and the Stage card
+  const [note, setNote] = useState('');                             // shared by the handset Note tile and the lead card
   const [lastCall, setLastCall] = useState<LastCall | null>(null); // the handset's "last call" strip + redial
-  const [prefill, setPrefill] = useState<string | null>(null);   // a number handed to the handset from Up next / Activity (tap-to-dial)
+  const [prefill, setPrefill] = useState<string | null>(null);     // a number handed to the handset from Up next / Activity (tap-to-dial)
+  // Auto dial / Burst dial run. Lives here, not in the page, so switching tabs or a lead answering elsewhere keeps it.
+  const [run, setRun] = useState<Run | null>(null);
+  const [lastRun, setLastRun] = useState<LastRun | null>(null);
+  const [runTape, setRunTape] = useState<ActivityEvent[]>([]);     // one row per lead dialed this run, in order (never manual calls)
+  const [lastBurst, setLastBurst] = useState<{ result: string; names: string[] } | null>(null); // how the last burst of the run ended
+  const [heldBack, setHeldBack] = useState<HeldBack[]>([]);        // Burst dial rang fewer leads than asked: who is cooling down
+  const runRef = useRef<Run | null>(null); runRef.current = run;
+  const manualRef = useRef(false);                                 // the burst in flight came from the manual keypad
+  const phaseRef = useRef<Phase>('idle'); phaseRef.current = phase;
+  const answeredRef = useRef<Date | null>(null); answeredRef.current = answeredAt;
 
   const push = useCallback((kind: EventKind, text: string, sub?: string, phone?: string) =>
     setFeed((f) => [{ id: 'e' + (++seq), at: new Date(), kind, text, sub, phone }, ...f].slice(0, FEED_MAX)), []);
   const sys = useCallback((text: string) => push('sys', text), [push]);
+  /** A feed row that also lands on the run's tape (when a run is on and the call was not a manual dial). */
+  const tapePush = useCallback((kind: EventKind, text: string, sub?: string, phone?: string) => {
+    const e: ActivityEvent = { id: 'e' + (++seq), at: new Date(), kind, text, sub, phone };
+    setFeed((f) => [e, ...f].slice(0, FEED_MAX));
+    if (runRef.current && !manualRef.current) setRunTape((t) => [...t, e]);
+  }, []);
 
   const refresh = useCallback(() => {
     api<Stats>('/api/leads/stats').then(setStats).catch(() => {});
@@ -79,10 +104,15 @@ export function useDialer(me: Me) {
     api<NextLead[]>('/api/leads/next?n=10').then(setUpNext).catch(() => {});
   }, []);
 
+  /** Rebuild the call from the server's view of it. */
+  const sync = useCallback(() => api<SessionState>('/api/session/state').then((s) => {
+    setRep(s.repUp ? 'connected' : 'disconnected');
+    setPhase(s.phase); setLegs(s.legs ?? []); setCard(s.card ?? null);
+    setAnsweredAt(s.answeredAt ? new Date(s.answeredAt) : null); setDuration(s.duration ?? null);
+  }).catch(() => {}), []);
+
   useEffect(() => {
-    api<SessionState>('/api/session/state')
-      .then((s) => { setRep(s.repUp ? 'connected' : 'disconnected'); if (s.burstId) setPhase('ringing'); })
-      .catch(() => {});
+    sync();
     api<ActivityRow[]>('/api/leads/activity')
       .then((rows) => {
         const last = rows[rows.length - 1];
@@ -93,83 +123,136 @@ export function useDialer(me: Me) {
     refresh();
 
     const socket = io(API || undefined, { withCredentials: true });
-    socket.on('connect', () => sys('live updates connected'));
-    socket.on('disconnect', () => sys('live updates lost — reconnecting'));
-    socket.on('rep:ringing', () => { setRep('ringing'); sys('connecting your audio'); });
-    socket.on('rep:connected', () => { setRep('connected'); sys('audio connected — you hear silence until a lead answers'); });
-    // A live/ended card survives a drop so the rep can still disposition it; only a ringing burst resets.
+    let first = true;
+    socket.on('connect', () => { sys('Live updates on'); if (!first) { sync(); refresh(); } first = false; }); // a reconnect may have missed events
+    socket.on('disconnect', () => sys('Live updates lost — reconnecting'));
+    socket.on('rep:ringing', () => { setRep('ringing'); sys('Connecting your audio…'); });
+    socket.on('rep:connected', () => { setRep('connected'); sys('Audio on — you hear silence until a lead answers'); });
+    // A live/ended card survives a drop so the rep can still save its outcome; only a ringing burst resets.
     socket.on('rep:disconnected', (p: { cause?: string }) => {
       setRep('disconnected'); setPhase((ph) => (ph === 'ringing' ? 'idle' : ph)); setLegs([]);
-      push('error', 'audio dropped', p?.cause ?? 'unknown cause');
+      push('error', 'Audio dropped', p?.cause ?? 'unknown cause');
     });
-    socket.on('burst:started', (p: { legs: Omit<Leg, 'status'>[] }) => {
-      setLegs(p.legs.map((l) => ({ ...l, status: 'ringing' }))); setCard(null); setDuration(null); setAnsweredAt(null); setPhase('ringing'); setNote('');
+    socket.on('burst:started', (p: { legs: Omit<Leg, 'status'>[]; manual?: boolean; heldBack?: HeldBack[] }) => {
+      manualRef.current = !!p.manual;
+      setLegs(p.legs.map((l) => ({ ...l, status: 'ringing' }))); setCard(null); setDuration(null); setAnsweredAt(null); setEndCause(null); setPhase('ringing'); setNote('');
+      setLastBurst(null); setHeldBack(p.heldBack ?? []);
       setLastCall({ phone: p.legs[0].phone, name: p.legs[0].name, from: p.legs[0].from, at: new Date(), outcome: null });
-      push('dialing', p.legs.map((l) => label(l.name, l.phone)).join('  ·  '), `dialing ${p.legs.length} lead${p.legs.length === 1 ? '' : 's'}`, p.legs.length === 1 ? p.legs[0].phone : undefined);
+      push('dialing', p.legs.map((l) => label(l.name, l.phone)).join('  ·  '), `Dialing ${p.legs.length} lead${p.legs.length === 1 ? '' : 's'}`, p.legs.length === 1 ? p.legs[0].phone : undefined);
     });
     socket.on('lead:answered', (c: Card) => {
-      setCard(c); setPhase('live'); setAnsweredAt(new Date());
+      setCard(c); setPhase('live'); setAnsweredAt(new Date()); setEndCause(null);
       setLastCall((lc) => ({ phone: c.phone, name: c.name, from: lc?.from ?? null, at: lc?.at ?? new Date(), outcome: null }));
       setLegs((ls) => ls.map((l) => ({ ...l, status: l.leadId === c.leadId ? 'answered' : 'cancelled' })));
-      push('answered', label(c.name, c.phone), 'answered', c.phone);
+      push('answered', label(c.name, c.phone), 'Answered', c.phone);
     });
-    socket.on('call:bridged', () => sys('bridged — you are on the line'));
-    socket.on('call:ended', (p: { duration: number | null }) => {
-      setDuration(p.duration); setPhase((ph) => (ph === 'live' ? 'ended' : ph));
-      push('ended', 'call ended', `${p.duration ?? '?'}s — pick an outcome`); refresh();
+    socket.on('lead:abandoned', (p: { leadId: number; name: string | null; phone: string }) => {
+      setLegs((ls) => ls.map((l) => (l.leadId === p.leadId ? { ...l, status: 'abandoned' } : l)));
+      tapePush('failed', label(p.name, p.phone), 'Picked up while you were already connecting — counts as an attempt, back in 2h', p.phone);
+    });
+    socket.on('lead:failed', (p: { name: string | null; phone: string; error: string }) => {
+      tapePush('failed', label(p.name, p.phone), 'Could not be dialed — back in the queue in 10 min', p.phone);
+    });
+    socket.on('call:bridged', () => sys('On the line'));
+    socket.on('call:ended', (p: { callId: number; duration: number | null; cause?: string }) => {
+      // The red button and the hangup webhook both report this call: one row, one refresh.
+      const id = 'end' + p.callId;
+      let fresh = false;
+      setFeed((f) => { if (f.some((e) => e.id === id)) return f; fresh = true; return [{ id, at: new Date(), kind: 'ended' as const, text: 'Call ended', sub: `${p.duration ?? '?'}s — save the outcome` }, ...f].slice(0, FEED_MAX); });
+      setEndCause(p.cause ?? null); setDuration((d) => d ?? p.duration);
+      setPhase((ph) => (ph === 'idle' ? ph : 'ended'));
+      if (fresh) refresh();
     });
     socket.on('call:error', (p: { error: string }) => { setErr(p.error); setPhase('ended'); push('error', p.error); });
-    socket.on('burst:ended', (p: { result?: string }) => {
+    socket.on('burst:ended', (p: { result?: string; legs?: BurstLeg[] }) => {
       setPhase('idle'); setLegs([]);
-      push(p?.result === 'cancelled' ? 'cancelled' : 'no_answer', p?.result === 'cancelled' ? 'dialing stopped' : 'nobody answered');
+      const stopped = p?.result === 'cancelled';
+      const rows = p.legs ?? [];
+      for (const l of rows) {
+        const kind: EventKind = l.disposition === 'cancelled' ? 'cancelled' : l.disposition === 'failed' ? 'failed' : 'no_answer';
+        tapePush(kind, label(l.name, l.phone), kind === 'cancelled' ? 'Dialing stopped' : kind === 'failed' ? 'Could not be dialed' : 'No answer', l.phone);
+      }
+      if (!rows.length) tapePush(stopped ? 'cancelled' : 'no_answer', stopped ? 'Dialing stopped' : 'Nobody answered');
+      setLastBurst({ result: stopped ? 'cancelled' : 'no_answer', names: rows.map((l) => label(l.name, l.phone)) });
       refresh();
     });
     return () => { socket.disconnect(); };
-  }, [push, sys, refresh]);
+  }, [push, sys, tapePush, refresh, sync]);
 
   // Plan s8 detail 3: the softphone socket dying is a dropped rep leg. Say so, never fail silently.
   useEffect(() => {
-    if (softphone.status === 'off' && rep === 'connected') { setRep('disconnected'); push('error', 'audio dropped', 'softphone disconnected — connect again'); }
+    if (softphone.status === 'off' && rep === 'connected') { setRep('disconnected'); push('error', 'Audio dropped', 'connect again from the top bar'); }
   }, [softphone.status, rep, push]);
 
-  const run = useCallback(async <T,>(what: string, fn: () => Promise<T>): Promise<T | undefined> => {
+  // Between dials nothing else moves the queue: a lead's 2h gap ends, a clock reaches 10:00. Poll once a minute while idle.
+  useEffect(() => {
+    if (phase !== 'idle') return;
+    const t = setInterval(refresh, 60_000);
+    return () => clearInterval(t);
+  }, [phase, refresh]);
+
+  const runCmd = useCallback(async <T,>(what: string, fn: () => Promise<T>): Promise<T | undefined> => {
     setBusy(true); setErr(null);
     try { return await fn(); }
-    catch (e) { const m = (e as Error).message; setErr(m); push('error', what + ' failed', m); return undefined; }
+    catch (e) {
+      const m = (e as Error).message;
+      if (/audio is not connected|audio leg is not connected/i.test(m)) setRep('disconnected'); // server lost the leg (restart): let Connect reappear
+      setErr(m); push('error', what + ' failed', m); return undefined;
+    }
     finally { setBusy(false); }
   }, [push]);
 
   return {
-    me, rep, phase, legs, card, answeredAt, duration, stats, fromNumbers, upNext, feed, feedLoaded, busy, err, softphone, note, setNote, lastCall, prefill, setPrefill,
-    connect: () => run('connect audio', async () => {
+    me, rep, phase, legs, card, answeredAt, duration, endCause, stats, fromNumbers, upNext, feed, feedLoaded, busy, err, softphone,
+    note, setNote, lastCall, prefill, setPrefill, run, lastRun, runTape, lastBurst, heldBack,
+    startRun: (mode: Mode) => { if (!runRef.current) { setRunTape([]); setLastBurst(null); setRun({ mode, since: new Date(), endAfter: false }); } },
+    stopRun: () => setRun((r) => { if (r) setLastRun({ mode: r.mode, since: r.since, until: new Date() }); return null; }),
+    endRunAfterCall: () => setRun((r) => (r ? { ...r, endAfter: true } : r)),
+    connect: () => runCmd('connect audio', async () => {
       const { token } = await post<{ token: string }>('/api/session/webrtc-token');
       await softphone.connect(token);
       await post('/api/session/connect', { mode: 'browser' });
     }),
     // Browser hangs up first so the SDK never BYEs a leg the server already ended; the server call then just clears state.
-    disconnect: () => run('disconnect audio', async () => { softphone.disconnect(); await post('/api/session/disconnect'); }),
-    // legs 1 = Auto dial (one lead), 2 = Burst dial (first to answer wins). Resolves undefined when the server refused.
-    startCalling: (legs: 1 | 2) => run('start calling', () => post('/api/session/burst', { legs })),
-    manualDial: (to: string, from: string) => run('call', () => post('/api/session/dial', { to, from })),
-    hangupLead: () => run('hang up', () => post('/api/session/hangup-lead')),
-    // DTMF while bridged (IVR menus, extensions). Not through run(): a keypress must never flip `busy`.
+    disconnect: () => runCmd('disconnect audio', async () => { softphone.disconnect(); await post('/api/session/disconnect'); }),
+    /** legs 1 = Auto dial (one lead), 2 = Burst dial (first to answer wins). 'drained' = nobody is due, which is a
+     *  state to explain, not an error to show in red. undefined = the server refused for a real reason (shown in err). */
+    startCalling: (legs: 1 | 2): Promise<'started' | 'drained' | undefined> => runCmd('start dialing', async () => {
+      try { await post('/api/session/burst', { legs }); return 'started' as const; }
+      catch (e) {
+        if (/nobody is due/i.test((e as Error).message)) { sys('Queue drained — nobody is due right now'); refresh(); return 'drained' as const; }
+        throw e;
+      }
+    }),
+    manualDial: (to: string, from: string) => runCmd('call', () => post('/api/session/dial', { to, from })),
+    // If the server has nothing to hang up while we show a live card (its burst was cleared), end the call locally
+    // so the outcome buttons appear instead of a dead red button.
+    hangupLead: () => runCmd('hang up', () => post('/api/session/hangup-lead')).then((r) => {
+      if (r === undefined && phaseRef.current === 'live') {
+        setDuration(answeredRef.current ? Math.floor((Date.now() - answeredRef.current.getTime()) / 1000) : 0);
+        setPhase('ended'); setErr(null);
+      }
+    }),
+    // DTMF while bridged (IVR menus, extensions). Not through runCmd(): a keypress must never flip `busy`.
     sendDtmf: (digits: string) => post('/api/session/dtmf', { digits }).catch((e) => setErr((e as Error).message)),
-    disposition: (outcome: Outcome, opts: { laterAt?: string; notes?: string } = {}) => run('save outcome', async () => {
+    disposition: (outcome: Outcome, opts: { laterAt?: string; notes?: string } = {}) => runCmd('save outcome', async () => {
       if (!card) return;
       await post('/api/session/disposition', {
         callId: card.callId, outcome, notes: (opts.notes ?? note) || undefined,
         laterAt: opts.laterAt ? new Date(opts.laterAt).toISOString() : undefined,
       });
       const who = label(card.name, card.phone);
-      push(outcome, who, { connected: 'connected', no_answer: 'no answer', later: 'call later' }[outcome] + (opts.notes ? ' · ' + opts.notes : ''), card.phone);
-      setCard(null); setDuration(null); setAnsweredAt(null); setPhase('idle'); setLegs([]); refresh();
+      const n = (opts.notes ?? note).trim();
+      tapePush(outcome === 'invalid' ? 'failed' : outcome, who, OUTCOME_TEXT[outcome] + (n ? ' · ' + n : ''), card.phone);
+      setCard(null); setDuration(null); setAnsweredAt(null); setEndCause(null); setPhase('idle'); setLegs([]); refresh();
       setNote(''); setLastCall((lc) => lc && { ...lc, outcome });
+      setRun((r) => { if (r?.endAfter) { setLastRun({ mode: r.mode, since: r.since, until: new Date() }); return null; } return r; });
     }),
-    upload: (file: File) => run('import', async () => {
+    upload: (file: File) => runCmd('import', async () => {
       const fd = new FormData(); fd.append('file', file);
       const r = await api<ImportResult>('/api/leads/import', { method: 'POST', body: fd });
-      sys(`imported ${r.inserted} new, ${r.updated} updated, ${r.skipped.length} skipped, ${r.warnings.length} warnings`);
-      for (const s of [...r.skipped, ...r.warnings].slice(0, 5)) sys(`line ${s.line}: ${s.reason}`);
+      sys(`Imported ${r.inserted} new, ${r.updated} updated, ${r.skipped.length} skipped, ${r.warnings.length} with no timezone`);
+      for (const s of [...r.skipped, ...r.warnings].slice(0, 5)) sys(`Line ${s.line}: ${s.reason}`);
       refresh();
       return r;
     }),

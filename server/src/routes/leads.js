@@ -2,7 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import { requireAuth } from '../auth.js';
 import { importCsv } from '../lib/import.js';
-import { peekLeads } from '../lib/queue.js';
+import { peekLeads, readiness } from '../lib/queue.js';
 import { q } from '../db/pool.js';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
@@ -24,7 +24,7 @@ router.get('/stats', requireAuth, async (req, res) => {
            (SELECT count(*)::int FROM leads WHERE user_id = $1 AND status IN ('queued', 'later'))               AS queued
     FROM calls c JOIN bursts b ON b.id = c.burst_id
     WHERE b.user_id = $1 AND c.disposition IS DISTINCT FROM 'cancelled'`, [req.userId]);
-  res.json(s);
+  res.json({ ...s, ...(await readiness(req.userId)) });
 });
 
 // "Up next": what the rep's next dial would pick, in order. utc_offset lets the client show the lead's local clock.

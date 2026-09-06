@@ -365,3 +365,55 @@ button.hs-lt:hover b { color: var(--blue-ink); }
   .camp-title { font-size: 34px; }
 }
 @media (prefers-reduced-motion: reduce) { .tile, .tile.now { animation: none; } }
+
+/* ---------- campaign polish (audit 2026-09-07) ----------
+   One status line under the actions, the run bar as a panel, the tape-sum doubling as the legend, flat grey
+   disabled Start, 372px right column in every state, and an outcome row sized for the most-clicked buttons. */
+.camp { gap: 18px; }
+.camp-hero { gap: 8px; }
+.camp-eyebrow.muted { color: var(--muted); }
+.camp-eyebrow .lamp { margin-right: 8px; vertical-align: 1px; }
+.camp-status { min-height: 20px; margin: -8px 0 0; font-size: 13px; color: var(--muted); }
+.camp-status.err { color: var(--coral); }
+.camp-usage { margin: -10px 0 0; font-family: var(--font-mono); font-size: 12.5px; color: var(--muted); }
+.camp-actions .btn-lg:disabled { opacity: 1; background: var(--line-2); border-color: var(--line-2); color: var(--muted); box-shadow: none; }
+.camp-grid { grid-template-columns: minmax(0, 1fr) 372px; gap: 18px; }
+.queue .nums { margin-bottom: 0; }
+.queue .micro { display: block; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.queue .next { margin-top: 6px; }
+
+.tile.grey { background: #c2c9d8; }
+.tape-sum { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 0; }
+.tape-sum > span { display: inline-flex; align-items: center; }
+.tape-sum > span + span::before { content: '·'; margin: 0 8px; color: var(--line-2); }
+.tape-sum .tile { width: 9px; height: 11px; border-radius: 3px; margin-right: 5px; animation: none; }
+.tape-sum .muted { margin-left: 4px; }
+.run-strip { gap: 12px; }
+.run-bar { display: grid; gap: 8px; padding: 10px 14px; }
+.run-bar .panel-head + * { margin-top: 0; }
+.run-bar .camp-status { margin: 0; }
+.racer.abandoned { opacity: 1; border-color: rgba(229, 72, 77, .4); }
+
+/* outcome row: two treatments, 44px targets, hotkeys shown */
+.outcomes .btn { min-height: 44px; font-size: 16px; }
+.btn-mini { min-height: 32px; }
+.outcomes kbd, .outcomes .later .hint kbd { margin-left: auto; font: 500 11px var(--font-mono); padding: 1px 6px; border-radius: 4px; background: var(--panel-2); color: var(--muted); }
+.outcomes .later .hint kbd { margin-left: 6px; }
+.btn-blue kbd, .btn-green kbd { background: rgba(255, 255, 255, .22); color: #fff; }
+.outcomes .later { grid-template-columns: 1fr; gap: 8px; }
+.outcomes .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.outcomes .pick { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
+.outcomes .later > .btn { justify-self: start; min-width: 200px; }
+.wrong { justify-self: start; background: none; border: 0; padding: 0; font-size: 13px; color: var(--muted); }
+.wrong:hover:not(:disabled) { text-decoration: underline; color: var(--ink); }
+.card .lastnote { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* handset: ringing timer and keypad focus */
+.hs.ringing .hs-timer.late { color: var(--muted); animation: none; }
+.hs-num:focus-within { border-bottom-color: var(--blue); }
+.hs-digits::placeholder { color: var(--muted); }
+.feed .dial { opacity: .55; }
+
+@media (max-width: 980px) {
+  .camp-call .handset:has(.hs.ringing), .camp-call .handset:has(.hs.live) { order: -1; }
+}

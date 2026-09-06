@@ -118,3 +118,21 @@ Rep workflow in HubSpot: open a contact you own → tick "Eazybe · Dial queue" 
 - Pages: hero + Start dialing + Upload CSV + "Your queue" (ready now / in queue / next few) + **the tape** —
   one tile per dial this run, coloured by outcome. In a call: run strip (tape, burst race chips, lead card) +
   handset in-call view. The Dialer tab is not auto-selected while the rep is on a campaign page.
+
+## 11. Campaign audit (2026-09-07)
+
+Six-lens audit (JustCall parity, state machine, visual, copy, edge cases, keyboard) -> 77 findings, 70 verified,
+synthesised into 31 changes; P0 + P1 shipped, P2 (skip next lead, keypad focus polish) later.
+- **State survives everything:** /api/session/state returns the call (ringing legs / lead card + timer / pending outcome);
+  the client rehydrates on load and on socket reconnect. Run state (mode, since, end-after) lives in useDialer.
+- **Server bugs:** winner claim ignores cancelled legs; a late answer after a winner is 'abandoned' (attempt + lead:abandoned),
+  after a red button it stays 'cancelled'; double Start refused by a claim token; caller-ID cap refused before claiming;
+  a dial-API failure requeues in 10 min instead of burning an attempt; burst:ended carries every leg; /hangup-lead falls
+  back to the DB when the burst is gone; dispositioned_at recorded; 'invalid' (Wrong number) outcome.
+- **Stop model:** idle -> Stop run (tape kept as Last run); live/ended -> End run after this call; ringing -> the handset's
+  coral button only (with a visible hint). Stopping a ring never ends the run.
+- **Screens:** compact status line with lamp + since; one status slot (error > reason > last burst > next preview > import);
+  Connect audio on the page; flat grey disabled Start; run bar as a panel; tape-sum doubles as legend with the ready count;
+  race chip in Auto too, loser kept while live; lead card: cause-aware eyebrow, 44px outcomes, 1/2/3 keys, callback presets
+  on the lead's clock, Wrong number; handset: ringing timer with give-up hint, one note field after the call.
+- **Copy:** server errors and feed rows in plain words; two shared queue strings (EMPTY_QUEUE / NOT_DUE) + next-open time.

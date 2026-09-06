@@ -123,3 +123,25 @@ export function sweepStuckLeads() {
             WHERE l.status = 'in_flight'
               AND NOT EXISTS (SELECT 1 FROM calls c WHERE c.lead_id = l.id AND c.started_at > now() - interval '2 hours')`);
 }
+
+/** What the campaign pages need to explain a grey Start button honestly: how many leads Start would pick
+ *  right now, when the next one opens (2h gap or the lead-local 10:00), and how many wait on each rule. */
+export async function readiness(userId) {
+  // $1 is a dummy so eligibleWhere's $2 (the rep) keeps its slot; pg rejects an unreferenced parameter.
+  const { rows: [r] } = await q(`SELECT count(*)::int AS ready FROM leads l WHERE $1::int = 0 AND ${eligibleWhere(null)}`, [0, userId]);
+  const LOCAL = `((now() AT TIME ZONE 'UTC') + (l.utc_offset * interval '1 hour'))`;
+  const { rows: [w] } = await q(
+    `SELECT count(*) FILTER (WHERE l.next_call_at > now())::int  AS waiting_gap,
+            count(*) FILTER (WHERE l.next_call_at <= now())::int AS waiting_window,
+            min(GREATEST(l.next_call_at, CASE
+              WHEN l.status = 'later' OR l.utc_offset IS NULL THEN l.next_call_at
+              WHEN EXTRACT(HOUR FROM ${LOCAL}) >= ${LEAD_LOCAL_WINDOW.end}
+                THEN (date_trunc('day', ${LOCAL}) + interval '1 day' + interval '${LEAD_LOCAL_WINDOW.start} hours' - (l.utc_offset * interval '1 hour')) AT TIME ZONE 'UTC'
+              WHEN EXTRACT(HOUR FROM ${LOCAL}) < ${LEAD_LOCAL_WINDOW.start}
+                THEN (date_trunc('day', ${LOCAL}) + interval '${LEAD_LOCAL_WINDOW.start} hours' - (l.utc_offset * interval '1 hour')) AT TIME ZONE 'UTC'
+              ELSE now() END)) AS next_open_at
+     FROM leads l
+     WHERE l.user_id = $1 AND l.status IN ('queued', 'later') AND l.attempt_count < ${MAX_ATTEMPTS}
+       AND NOT ($2::int = 0 AND ${eligibleWhere(null).replace(/\$2/g, '$1')})`, [userId, 0]);
+  return { ready: r.ready, next_open_at: w.next_open_at, waiting_gap: w.waiting_gap, waiting_window: w.waiting_window };
+}

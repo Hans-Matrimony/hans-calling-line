@@ -1,7 +1,7 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { useDialer, FromNumber } from '../lib/useDialer';
-import { OUTCOME_LABEL, clock, mmss, prettyPhone, splitName } from '../lib/format';
+import { DIAL_TIMEOUT, OUTCOME_LABEL, clock, mmss, prettyPhone, splitName } from '../lib/format';
 
 type D = ReturnType<typeof useDialer>;
 
@@ -55,7 +55,8 @@ function Keypad({ d }: { d: D }) {
   const [iso, setIso] = useState('IN');
   const [local, setLocal] = useState('');
   const [from, setFrom] = useState('');
-  useEffect(() => { setIso(pref('eazybe.hs.cc', 'IN')); }, []);
+  const digitsRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { setIso(pref('eazybe.hs.cc', 'IN')); digitsRef.current?.focus(); }, []);
   useEffect(() => { // remembered caller ID if still configured and under its cap, else the first that is
     if (!d.fromNumbers.length) return;
     const want = from || pref('eazybe.hs.from', '');
@@ -85,7 +86,7 @@ function Keypad({ d }: { d: D }) {
   };
   const dial = () => { if (canDial) d.manualDial(full, from); };
   // A number handed over from Up next / Activity (tap-to-dial): load it; the rep presses Call.
-  useEffect(() => { if (d.prefill) { type(d.prefill); d.setPrefill(null); } }, [d.prefill]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (d.prefill) { type(d.prefill); d.setPrefill(null); digitsRef.current?.focus(); } }, [d.prefill]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const why = d.rep !== 'connected' ? 'Connect audio to call.' : !from && d.fromNumbers.length ? 'Every caller ID has hit its daily cap.' : !d.fromNumbers.length ? 'No caller IDs configured.'
     : local && !valid ? (iso ? 'That number looks short.' : 'Start with the country code, e.g. 1 415 …') : '';
@@ -100,7 +101,7 @@ function Keypad({ d }: { d: D }) {
             <span className="hs-ava" aria-hidden>{initials(splitName(last.name).name) || <Phone />}</span>
             <button className="hs-lt" onClick={() => type(last.phone)} title="Load this number">
               <b>{splitName(last.name).name || prettyPhone(last.phone)}</b>
-              <span>{regionOf(last.from) ? `via ${regionOf(last.from)!.iso} at ${clock(last.at)}` : clock(last.at)}{last.outcome ? ` · ${OUTCOME_LABEL[last.outcome] ?? last.outcome}` : ' · dialed'}</span>
+              <span>{regionOf(last.from) ? `from ${regionOf(last.from)!.iso} number at ${clock(last.at)}` : clock(last.at)}{last.outcome ? ` · ${OUTCOME_LABEL[last.outcome] ?? last.outcome}` : ' · dialed'}</span>
             </button>
             <button className="hs-redial" onClick={() => d.manualDial(last.phone, from)} disabled={!ready} aria-label="Call again"><Phone /></button>
           </>
@@ -116,13 +117,13 @@ function Keypad({ d }: { d: D }) {
             {CODES.map(([i, c, n]) => <option key={i || 'none'} value={i}>{i ? `${n} +${c}` : n}</option>)}
           </select>
         </span>
-        <input className="hs-digits" value={local} placeholder={iso ? 'Enter number' : 'Code and number'} inputMode="tel" autoComplete="off" spellCheck={false} aria-label="Number to call"
+        <input ref={digitsRef} className="hs-digits" value={local} placeholder={iso ? 'Enter number' : 'Code and number'} inputMode="tel" autoComplete="off" spellCheck={false} aria-label="Number to call"
           onChange={(e) => type(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') dial(); }} />
-        <button className="hs-bs" onClick={() => setLocal((s) => s.slice(0, -1))} disabled={!local} aria-label="Delete last digit"><Backspace /></button>
+        <button className="hs-bs" tabIndex={-1} onMouseDown={(e) => e.preventDefault()} onClick={() => setLocal((s) => s.slice(0, -1))} disabled={!local} aria-label="Delete last digit"><Backspace /></button>
       </div>
 
       <div className="hs-keys">
-        {KEYS.map(([k, sub]) => <button key={k} onClick={() => setLocal((s) => s + k)} aria-label={k}><span>{k}</span><small>{sub}</small></button>)}
+        {KEYS.map(([k, sub]) => <button key={k} tabIndex={-1} onMouseDown={(e) => e.preventDefault()} onClick={() => setLocal((s) => s + k)} aria-label={k}><span>{k}</span><small>{sub}</small></button>)}
       </div>
 
       <div className="hs-action">
@@ -150,14 +151,20 @@ function InCall({ d }: { d: D }) {
   const [noteOpen, setNoteOpen] = useState(false);
   const [sent, setSent] = useState('');
   const [, tick] = useState(0);
+  const [ringSince, setRingSince] = useState<Date | null>(null);
+  useEffect(() => { setRingSince(d.phase === 'ringing' ? new Date() : null); }, [d.phase]);
+  useEffect(() => { if (d.phase === 'ended') setNoteOpen(false); }, [d.phase]); // after the call the lead card is the one note field
   useEffect(() => {
-    if (!d.answeredAt || d.phase !== 'live') return;
+    if (d.phase !== 'ringing' && !(d.phase === 'live' && d.answeredAt)) return;
     const t = setInterval(() => tick((n) => n + 1), 1000);
     return () => clearInterval(t);
   }, [d.answeredAt, d.phase]);
 
   const live = d.phase === 'live';
   const ringing = d.phase === 'ringing';
+  const ended = d.phase === 'ended';
+  const ringSecs = ringSince ? Math.max(0, Math.floor((Date.now() - ringSince.getTime()) / 1000)) : 0;
+  const late = ringing && ringSecs >= DIAL_TIMEOUT - 5;
   const secs = d.phase === 'ended' ? d.duration ?? 0 : d.answeredAt ? Math.max(0, Math.floor((Date.now() - d.answeredAt.getTime()) / 1000)) : 0;
   const c = d.card;
   const leg0 = d.legs[0];
@@ -166,18 +173,18 @@ function InCall({ d }: { d: D }) {
   const region = (() => { const r = d.fromNumbers.find((n) => n.number === leg0?.from)?.region; return r ? REGION[r] : null; })();
   const many = ringing && d.legs.length > 1;
 
-  const eyebrow = ringing ? `Outgoing via ${region?.name ?? 'Eazybe'}` : live ? 'On the line' : 'Call ended';
+  const eyebrow = ringing ? `Calling from your ${region?.name ?? 'Eazybe'} number` : live ? 'On the line' : 'Call ended';
   const title = many ? `Ringing ${d.legs.length} leads` : name || prettyPhone(phone) || '—';
   const sub = many ? d.legs.map((l) => l.name || prettyPhone(l.phone)).join('  ·  ') : name ? prettyPhone(phone) : null;
   const press = (k: string) => { setSent((s) => (s + k).slice(-24)); d.sendDtmf(k); };
 
   return (
-    <section className={'hs ' + d.phase} aria-label="Call in progress" aria-live="polite">
+    <section className={'hs ' + d.phase} aria-label="Call in progress">
       <div className="hs-status">
         <span className="hs-eyebrow">{eyebrow}</span>
         <div className="hs-who">{title}</div>
         {sub && <div className="hs-sub mono">{sub}</div>}
-        <div className="hs-timer">{ringing ? 'Ringing…' : mmss(secs)}</div>
+        <div className={'hs-timer' + (late ? ' late' : '')}>{ringing ? `Ringing · ${ringSecs}s` : mmss(secs)}</div>
       </div>
 
       {pad && live && (
@@ -187,21 +194,24 @@ function InCall({ d }: { d: D }) {
         </div>
       )}
 
-      {noteOpen && (
+      {noteOpen && !ended && (
         <textarea className="field" rows={3} value={d.note} onChange={(e) => d.setNote(e.target.value)} autoFocus
-          placeholder="Note — saved with the outcome, shown next time this lead comes up" aria-label="Call note" />
+          placeholder="Note — you can finish it on the lead card after the call" aria-label="Call note" />
       )}
 
       <div className="hs-tiles">
         <button className={d.softphone.muted ? 'on' : ''} onClick={d.softphone.toggleMute} disabled={!live} aria-pressed={d.softphone.muted}><Mic off={d.softphone.muted} /><span>{d.softphone.muted ? 'Unmute' : 'Mute'}</span></button>
         <button className={pad ? 'on' : ''} onClick={() => setPad((v) => !v)} disabled={!live} aria-pressed={pad}><Grid /><span>Dialpad</span></button>
-        <button className={noteOpen || d.note ? 'on' : ''} onClick={() => setNoteOpen((v) => !v)} aria-pressed={noteOpen}><NoteIcon /><span>Note</span></button>
+        <button className={noteOpen || d.note ? 'on' : ''} onClick={() => setNoteOpen((v) => !v)} disabled={ended} aria-pressed={noteOpen}><NoteIcon /><span>Note</span></button>
       </div>
 
       <div className="hs-action">
-        {d.phase === 'ended'
-          ? <p className="hs-hint">Save an outcome on the call card.</p>
-          : <button className={'hs-call hang' + (ringing ? ' ringing' : '')} onClick={d.hangupLead} disabled={d.busy} aria-label={ringing ? 'Stop dialing' : 'Hang up'}><Phone /></button>}
+        {ended
+          ? <p className="hs-hint">Save the outcome on the lead card.</p>
+          : <>
+            <button className={'hs-call hang' + (ringing ? ' ringing' : '')} onClick={d.hangupLead} disabled={d.busy} aria-label={ringing ? 'Stop dialing' : 'Hang up'}><Phone /></button>
+            <p className="hs-hint">{ringing ? (late ? `Gives up at ${DIAL_TIMEOUT}s` : d.legs.length > 1 ? 'Stop dialing both' : 'Stop dialing') : 'Hang up'}</p>
+          </>}
       </div>
     </section>
   );

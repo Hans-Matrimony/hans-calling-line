@@ -46,7 +46,7 @@ async function onAnswered(ccid, userId, burstId, leadId) {
   // The race (plan s11): the first answered leg claims the burst atomically. Everyone else lost.
   const { rows: [won] } = await q(
     `UPDATE bursts b SET winner_call_id = c.id FROM calls c
-     WHERE b.id = $1 AND c.burst_id = b.id AND c.telnyx_call_id = $2 AND b.winner_call_id IS NULL
+     WHERE b.id = $1 AND c.burst_id = b.id AND c.telnyx_call_id = $2 AND b.winner_call_id IS NULL AND c.disposition IS NULL
      RETURNING c.id AS call_id`, [burstId, ccid]);
 
   if (!won) {
@@ -54,11 +54,18 @@ async function onAnswered(ccid, userId, burstId, leadId) {
     const { rows: [dup] } = await q(
       'SELECT 1 FROM bursts b JOIN calls c ON c.id = b.winner_call_id WHERE b.id = $1 AND c.telnyx_call_id = $2', [burstId, ccid]);
     if (dup) return;
-    // A human picked up and we are hanging up on them: an abandoned call (plan s12, <2% target).
+    // A human picked up after another lead already won and we hang up on them: an abandoned call (plan s12, <2% target).
+    // A leg that answers after the rep pressed the red button (no winner) stays 'cancelled': no attempt, back in 10 min.
     await hangup(ccid);
-    const { rowCount } = await q(
-      `UPDATE calls SET disposition = 'abandoned', answered_at = now() WHERE telnyx_call_id = $1 AND disposition IS NULL`, [ccid]);
-    if (rowCount) await releaseLead(leadId, 'no_answer'); // they were disturbed: counts as an attempt, retry in 2h
+    const { rows: [ab] } = await q(
+      `UPDATE calls c SET disposition = 'abandoned', answered_at = now() FROM bursts b
+       WHERE c.telnyx_call_id = $1 AND b.id = c.burst_id AND b.winner_call_id IS NOT NULL
+         AND (c.disposition IS NULL OR c.disposition = 'cancelled') RETURNING c.lead_id`, [ccid]);
+    if (ab) {
+      await releaseLead(ab.lead_id, 'no_answer'); // they were disturbed: counts as an attempt, retry in 2h
+      const { rows: [l] } = await q('SELECT name, phone FROM leads WHERE id = $1', [ab.lead_id]);
+      emitToUser(userId, 'lead:abandoned', { leadId: ab.lead_id, name: l?.name ?? null, phone: l?.phone ?? null });
+    }
     return;
   }
 
@@ -116,7 +123,7 @@ async function onHangup(p, userId, burstId, leadId) {
      FROM calls WHERE burst_id = $1`, [burstId]);
   if (s.open === 0 && !s.answered) {
     activeBurst.delete(userId);
-    emitToUser(userId, 'burst:ended', { burstId, result: 'no_answer' });
+    emitToUser(userId, 'burst:ended', { burstId, result: 'no_answer', legs: await burstLegs(burstId) });
     const rep = await repLeg(userId);
     if (rep) { await stopPlayback(rep); noAnswerTone(rep).catch((e) => console.warn('noanswer tone', e.message)); }
   }
@@ -137,8 +144,15 @@ export async function cancelOpenLegs(burstId, keepCallId = null) {
   }
 }
 
+/** Every leg of a burst with how it ended, for burst:ended (one named tape tile per lead, not one per burst). */
+export async function burstLegs(burstId) {
+  const { rows } = await q(
+    `SELECT l.id AS "leadId", l.name, l.phone, c.disposition FROM calls c JOIN leads l ON l.id = c.lead_id WHERE c.burst_id = $1 ORDER BY c.id`, [burstId]);
+  return rows;
+}
+
 /** Lead card (plan s10): name, country, attempt #, last outcome. Company is not in the export. */
-async function leadCard(callId) {
+export async function leadCard(callId) {
   const { rows: [r] } = await q(
     `SELECT c.id AS "callId", l.id AS "leadId", l.name, l.phone, l.country, l.segment, l.utc_offset AS "utcOffset",
             l.hubspot_contact_id AS "hubspotId", l.extra, l.attempt_count + 1 AS attempt,
@@ -153,14 +167,14 @@ async function leadCard(callId) {
 /** Place one burst: a bursts row, one lead leg per lead (plan s8), `burst:started` to the rep.
  *  Shared by Start calling (2 queued leads, caller ID by region) and the manual dialer (1 typed
  *  number, caller ID chosen by the rep via `fromOverride`). Throws when no leg could be placed. */
-export async function startBurst(userId, leads, fromOverride = null) {
+export async function startBurst(userId, leads, fromOverride = null, extra = {}) {
   const { rows: [burst] } = await q('INSERT INTO bursts (user_id) VALUES ($1) RETURNING id', [userId]);
   activeBurst.set(userId, burst.id);
   const legs = [];
   for (const lead of leads) {
     const region = resolveLead({ country: lead.country, phone: lead.phone })?.region ?? 'us';
     const from = fromOverride ?? await pickFromNumber(region);
-    if (!from) { await releaseLead(lead.id, 'cancelled'); continue; } // every number at its daily cap
+    if (!from) { await q(`UPDATE leads SET status = 'queued' WHERE id = $1`, [lead.id]); continue; } // every number at its cap: nothing rang, so no cooldown
     try {
       const ccid = await dialLead({ to: lead.phone, from, userId, burstId: burst.id, leadId: lead.id });
       await q('INSERT INTO calls (lead_id, burst_id, telnyx_call_id, from_number) VALUES ($1, $2, $3, $4)', [lead.id, burst.id, ccid, from]);
@@ -168,11 +182,12 @@ export async function startBurst(userId, leads, fromOverride = null) {
     } catch (e) {
       console.error('dial failed', lead.phone, e.message);
       await q(`INSERT INTO calls (lead_id, burst_id, from_number, disposition) VALUES ($1, $2, $3, 'failed')`, [lead.id, burst.id, from]);
-      await releaseLead(lead.id, 'failed');
+      await releaseLead(lead.id, 'cancelled'); // the phone never rang: back in 10 min, no attempt consumed
+      emitToUser(userId, 'lead:failed', { leadId: lead.id, name: lead.name, phone: lead.phone, error: e.message });
     }
   }
   if (!legs.length) { activeBurst.delete(userId); throw new Error('no legs could be placed'); }
-  emitToUser(userId, 'burst:started', { burstId: burst.id, legs });
+  emitToUser(userId, 'burst:started', { burstId: burst.id, legs, manual: !!fromOverride, ...extra });
   const rep = await repLeg(userId);
   if (rep) startTick(rep).catch((e) => console.warn('tick failed', e.message)); // rep hears dialing in progress
   return { burstId: burst.id, legs };

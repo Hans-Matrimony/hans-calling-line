@@ -40,3 +40,46 @@ export function splitName(name: string | null) {
 export const OUTCOME_LABEL: Record<string, string> = {
   connected: 'connected', no_answer: 'no answer', later: 'call later', cancelled: 'cancelled', failed: 'failed', abandoned: 'abandoned', invalid: 'invalid number',
 };
+
+export const DIAL_TIMEOUT = 30; // seconds a lead rings before the dialer gives up (server/src/config.js DIAL_TIMEOUT_SECS)
+
+// One pair of strings for "nothing to dial", shared by the campaign pages and Up next.
+export const EMPTY_QUEUE = 'Your queue is empty — press Upload CSV to add leads.';
+export const NOT_DUE = 'Nobody is due right now — leads come back 2h after a no-answer, inside 10:00–19:00 their time, up to 6 tries.';
+
+/** Date -> the value a datetime-local input wants, on the rep's clock. */
+export function toLocalInput(d: Date) {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** `hour`:00 on the lead's local day `dayOffset` days from now, as a datetime-local string on the rep's clock.
+ *  Callbacks land inside the queue's own window instead of at "10am" on the rep's clock. */
+export function leadLocalAt(offset: string | number | null | undefined, dayOffset: number, hour: number): string | null {
+  if (offset == null || offset === '') return null;
+  const off = Number(offset);
+  if (Number.isNaN(off)) return null;
+  const d = new Date(Date.now() + off * 3600000); // the lead's wall clock, carried as UTC fields
+  d.setUTCDate(d.getUTCDate() + dayOffset); d.setUTCHours(hour, 0, 0, 0);
+  return toLocalInput(new Date(d.getTime() - off * 3600000));
+}
+
+/** "Tue 10:00 their time" for a chosen callback, so the rep sees the lead's clock, not just their own. */
+export function describeLater(laterAt: string, offset: string | number | null | undefined) {
+  const when = new Date(laterAt);
+  if (Number.isNaN(when.getTime())) return '';
+  const off = offset == null || offset === '' ? NaN : Number(offset);
+  if (Number.isNaN(off)) return when.toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
+  const lead = new Date(when.getTime() + off * 3600000);
+  const day = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][lead.getUTCDay()];
+  return `${day} ${String(lead.getUTCHours()).padStart(2, '0')}:${String(lead.getUTCMinutes()).padStart(2, '0')} their time`;
+}
+
+/** "in 12 min", "in 2h 05m", "in 3d" - how far away a moment is. */
+export function relative(to: Date, now = new Date()) {
+  const m = Math.round((to.getTime() - now.getTime()) / 60000);
+  if (m < 1) return 'now';
+  if (m < 60) return `in ${m} min`;
+  const h = Math.floor(m / 60);
+  return h < 24 ? `in ${h}h ${String(m % 60).padStart(2, '0')}m` : `in ${Math.round(h / 24)}d`;
+}

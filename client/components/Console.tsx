@@ -43,7 +43,9 @@ export default function Console({ me, onLogout }: { me: Me; onLogout: () => void
   // A call is never hidden behind a tab: dialing or a live lead brings the dialer forward so the card and outcome
   // are in view - unless the rep is on Auto dial / Burst dial, which show the call themselves.
   useEffect(() => {
-    if ((d.phase === 'ringing' || d.phase === 'live') && tab !== 'auto' && tab !== 'burst') setTab('dialer');
+    if (d.phase !== 'ringing' && d.phase !== 'live') return;
+    const target: Tab = d.run ? d.run.mode : (tab === 'auto' || tab === 'burst') ? tab : 'dialer';
+    if (tab !== target) setTab(target);
   }, [d.phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Tap-to-dial from Up next / Activity: the number lands in the handset, the rep presses Call.
@@ -98,7 +100,7 @@ export default function Console({ me, onLogout }: { me: Me; onLogout: () => void
         {tab === 'auto' && <div className="page wide"><Campaign d={d} mode="auto" /></div>}
         {tab === 'burst' && <div className="page wide"><Campaign d={d} mode="burst" /></div>}
         {tab === 'activity' && <div className="page"><Activity feed={d.feed} loaded={d.feedLoaded} onDial={dialFrom} /></div>}
-        {tab === 'upnext' && <div className="page"><UpNext leads={d.upNext} queued={s?.queued} onDial={dialFrom} /></div>}
+        {tab === 'upnext' && <div className="page"><UpNext leads={d.upNext} queued={s?.queued} nextOpen={s?.next_open_at ?? null} onDial={dialFrom} /></div>}
 
         {(tab === 'activity' || tab === 'upnext') && (
           <footer className="bottombar">

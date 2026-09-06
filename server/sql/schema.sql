@@ -65,3 +65,7 @@ ALTER TABLE leads ADD COLUMN IF NOT EXISTS extra JSONB NOT NULL DEFAULT '{}'::js
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS user_id INT REFERENCES users(id);
 CREATE INDEX IF NOT EXISTS leads_owner_idx ON leads (user_id, status, next_call_at);
 UPDATE leads SET user_id = (SELECT id FROM users WHERE email = 'himanshu@eazybe.com') WHERE user_id IS NULL;
+
+-- When the rep saved the outcome: wrap-up time = dispositioned_at - (answered_at + duration). Manual Next
+-- makes this the one number the measurement day should see (PLAN-v2).
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS dispositioned_at TIMESTAMPTZ;
