@@ -315,7 +315,12 @@ export async function pullQueue(userId) {
       return doPull(again);
     }
     return doPull(user);
-  })().catch((e) => { markBad(e.message); throw e; });
+  })().catch((e) => {
+    // A rep with no HubSpot user is that rep's problem (the Users screen shows it), not the inlet's:
+    // the portal-wide health line is for the token, the scopes and the checkbox property.
+    if (e.message !== MSG.noOwner) markBad(e.message);
+    throw e;
+  });
   inFlight.set(userId, run);
   run.finally(() => inFlight.delete(userId)).catch(() => {});
   return run;
