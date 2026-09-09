@@ -115,6 +115,9 @@ async function onHangup(p, userId, burstId, leadId) {
     const { rows: [d] } = await q(
       `UPDATE calls SET duration = coalesce(duration, EXTRACT(EPOCH FROM (now() - answered_at))::int) WHERE id = $1 RETURNING duration`, [c.id]);
     if (!c.disposition) emitToUser(userId, 'call:ended', { callId: c.id, leadId, duration: d.duration, cause: p.hangup_cause });
+    // On the timeline now, updated when the outcome is saved: a rep who never presses a tile must not
+    // make the call vanish from HubSpot.
+    logCall(c.id).catch((e) => console.warn('hubspot logCall', e.message));
     pokeAdmins('live');
     return;
   }

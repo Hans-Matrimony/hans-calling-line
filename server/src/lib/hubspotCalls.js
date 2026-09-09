@@ -53,9 +53,15 @@ async function contactFor(call) {
   const dialed = digits(call.to_number);
   if (dialed.length < 8) return null;
   const found = await hs('/crm/v3/objects/contacts/search', { method: 'POST', body: JSON.stringify({
-    query: dialed.slice(-10), limit: 5, properties: ['phone', 'mobilephone'] }) });
-  const hit = (found.results ?? []).find((c) => [c.properties?.phone, c.properties?.mobilephone].some((n) => n && digits(n).endsWith(dialed.slice(-10))));
-  let id = hit?.id ?? null;
+    query: dialed.slice(-10), limit: 10, properties: ['phone', 'mobilephone', 'hubspot_owner_id', 'lastmodifieddate'] }) });
+  // One number can sit on several contacts (a duplicate, or one another dialer created). Pick
+  // deterministically: the rep's own contact first, then whichever was touched most recently -
+  // never "whatever the search happened to return first".
+  const hits = (found.results ?? []).filter((c) => [c.properties?.phone, c.properties?.mobilephone].some((n) => n && digits(n).endsWith(dialed.slice(-10))));
+  hits.sort((a, b) => (Number(b.properties?.hubspot_owner_id === String(call.owner_id ?? '')) - Number(a.properties?.hubspot_owner_id === String(call.owner_id ?? '')))
+    || String(b.properties?.lastmodifieddate ?? '').localeCompare(String(a.properties?.lastmodifieddate ?? '')));
+  if (hits.length > 1) console.log(`[hubspot] ${hits.length} contacts hold ${call.to_number}; logging against ${hits[0].id}`);
+  let id = hits[0]?.id ?? null;
   if (!id) {
     if (!(await getSetting('hubspot_create_contacts'))) return null;
     const [firstname, ...rest] = String(call.lead_name ?? '').trim().split(/\s+/).filter(Boolean);
@@ -84,12 +90,21 @@ async function load(callId) {
 
 const fail = (callId, e) => q('UPDATE calls SET hubspot_error = $2 WHERE id = $1', [callId, String(e?.message ?? e).slice(0, 200)]).catch(() => {});
 
-/** Create the Call engagement for a settled dial. Idempotent: a second call for the same id is a no-op. */
+// A call that was answered but never dispositioned: the rep walked away from the outcome card. It
+// still happened, so it still belongs on the timeline - logged the moment the leg hangs up and
+// updated when (if) the outcome arrives.
+const PENDING = { label: 'Answered — no outcome saved yet', status: 'COMPLETED', disposition: null };
+
+/** Put the call on the contact's timeline, or update what is already there. Called twice for a normal
+ *  call - once when the leg hangs up, again when the rep saves the outcome - so it creates on the
+ *  first pass and PATCHes on the second. Nothing is ever lost to a forgotten outcome. */
 export async function logCall(callId) {
   if (!configured()) return;
   const c = await load(callId);
-  if (!c || c.hubspot_call_id || !c.disposition || c.disposition === 'cancelled') return;
-  const out = OUTCOME[c.disposition];
+  if (!c) return;
+  if (c.disposition === 'cancelled') return;              // the loser leg of a burst: never a call
+  if (!c.answered_at && !c.disposition) return;           // still ringing; nothing to say yet
+  const out = c.disposition ? OUTCOME[c.disposition] : PENDING;
   if (!out) return;
   try {
     const contact = await contactFor(c);
@@ -113,6 +128,16 @@ export async function logCall(callId) {
     const rec = recordingLink(c);
     if (rec) properties.hs_call_recording_url = rec;
 
+    // Already on the timeline (logged at hangup): update it in place, associations and all, rather
+    // than adding a second activity for the same call.
+    if (c.hubspot_call_id) {
+      await hs('/crm/v3/objects/calls/' + c.hubspot_call_id, { method: 'PATCH', body: JSON.stringify({ properties }) });
+      await q('UPDATE calls SET hubspot_error = NULL WHERE id = $1', [callId]);
+      markWrite(true);
+      pokeAdmins('hubspot');
+      return;
+    }
+
     const payload = { properties, associations: [{ to: { id: contact }, types: [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: CALL_TO_CONTACT }] }] };
     let created;
     try { created = await hs('/crm/v3/objects/calls', { method: 'POST', body: JSON.stringify(payload) }); }
@@ -126,6 +151,7 @@ export async function logCall(callId) {
       } else throw e;
     }
     await q('UPDATE calls SET hubspot_call_id = $2, hubspot_error = NULL WHERE id = $1', [callId, String(created.id)]);
+    retried.delete(callId);
     markWrite(true);
     pokeAdmins('hubspot');
     if (!c.hubspot_file_url && c.recording_status === 'saved') attachRecording(callId).catch((e) => console.warn('hubspot attach', e.message));

@@ -151,8 +151,30 @@ await logCall(C6);
 await startLeadRecording(C6, 'cc-6', { kind: 'lead', userId: rep.id, burstId: 6, leadId: L1 });
 await onRecordingSaved({ call_leg_id: 'leg-1' }, { kind: 'lead', callId: C6 });
 await sleep(900); // list -> download -> upload -> PATCH, four stubbed hops
-{ const r6 = await row(C6); ok('C6 state before the PATCH check', [r6.recording_status, !!r6.hubspot_call_id, r6.hubspot_file_url, calls.hsCallPatch.length], ['saved', true, 'https://f.hubspotusercontent.net/rec.mp3', 1]); }
 ok('late recording is PATCHed onto the existing engagement', calls.hsCallPatch.at(-1)?.body?.properties?.hs_call_recording_url, 'https://f.hubspotusercontent.net/rec.mp3');
+
+// --- 3b. a rep who never presses an outcome tile must not make the call vanish ------------------
+const C7 = await call(L1, 'cc-7b', '2026-09-09T17:00:00Z', { answered: '2026-09-09T17:00:04Z', duration: 25 }); // answered, no disposition
+const postsBefore = calls.hsCallPost.length;
+await logCall(C7);
+const pending = calls.hsCallPost.at(-1);
+ok('answered but never dispositioned: logged anyway at hangup',
+  [calls.hsCallPost.length - postsBefore, pending?.properties?.hs_call_status, pending?.properties?.hs_call_duration, 'hs_call_disposition' in (pending?.properties ?? {})],
+  [1, 'COMPLETED', '25000', false]);
+ok('...and it says so on the timeline', pending?.properties?.hs_call_title, 'Eazybe dialer · Answered — no outcome saved yet');
+await q(`UPDATE calls SET disposition = 'connected', sub_outcome = 'interested', notes = 'came back to it' WHERE id = $1`, [C7]);
+const patchesBefore = calls.hsCallPatch.length;
+await logCall(C7);
+const upd = calls.hsCallPatch.at(-1);
+ok('the outcome later updates that same activity, no second one',
+  [calls.hsCallPost.length - postsBefore, calls.hsCallPatch.length - patchesBefore, upd?.body?.properties?.hs_call_disposition, upd?.body?.properties?.hs_activity_type, upd?.body?.properties?.hs_call_body],
+  [1, 1, 'guid-connected', 'Interested', 'Interested · came back to it']);
+const stillRinging = await call(L1, 'cc-7c', '2026-09-09T17:30:00Z', {}); // never answered, no outcome
+await logCall(stillRinging);
+ok('a leg still in flight is not logged', calls.hsCallPost.length - postsBefore, 1);
+await q(`UPDATE calls SET disposition = 'cancelled' WHERE id = $1`, [stillRinging]);
+await logCall(stillRinging);
+ok('a cancelled burst leg is never logged', calls.hsCallPost.length - postsBefore, 1);
 
 // --- 4. metrics: IST day, segments, wrap median -------------------------------------------------
 const LI = await lead('202', '+919876543210', { segment: 'india', country: 'India' });
