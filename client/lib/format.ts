@@ -41,10 +41,35 @@ export const OUTCOME_LABEL: Record<string, string> = {
   connected: 'connected', no_answer: 'no answer', later: 'call later', cancelled: 'cancelled', failed: 'failed', abandoned: 'abandoned', invalid: 'invalid number',
 };
 
+// Call-card v2: the seven tiles collapse onto four dispositions, so the run tape and the activity feed
+// prefer the sub-outcome when there is one (a green 'Interested' vs a coral 'Not interested', both of
+// which are disposition 'connected'). Falls back to the disposition label when no tile was recorded.
+export const SUB_OUTCOME_LABEL: Record<string, string> = {
+  interested: 'Interested', follow_up: 'Follow-up', callback: 'Callback', not_interested: 'Not interested', not_qualified: 'Not qualified',
+};
+const SUB_TONE: Record<string, string> = {
+  interested: 'green', follow_up: 'blue', callback: 'blue', not_interested: 'coral', not_qualified: 'grey',
+};
+/** Tape/feed tone for a settled call, sub-outcome first. Returns a tile colour name or '' (no tile). */
+export function outcomeTone(disposition: string | null, subOutcome?: string | null): string {
+  if (subOutcome && SUB_TONE[subOutcome]) return SUB_TONE[subOutcome];
+  switch (disposition) {
+    case 'connected': return 'green';
+    case 'later': return 'blue';
+    case 'no_answer': return 'grey';
+    case 'cancelled': return 'amber';
+    case 'invalid': case 'failed': case 'abandoned': return 'coral';
+    default: return '';
+  }
+}
+
 export const DIAL_TIMEOUT = 30; // seconds a lead rings before the dialer gives up (server/src/config.js DIAL_TIMEOUT_SECS)
 
 // One pair of strings for "nothing to dial", shared by the campaign pages and Up next.
-export const EMPTY_QUEUE = 'Your queue is empty — press Upload CSV to add leads.';
+/** There are two inlets now, so an empty queue has to name the one this rep actually has. */
+export const emptyQueue = (hubspot?: boolean) => hubspot
+  ? 'Your queue is empty — tick "Eazybe · Dial queue" on a contact in HubSpot, or press Upload CSV.'
+  : 'Your queue is empty — press Upload CSV to add leads.';
 export const NOT_DUE = 'Nobody is due right now — leads come back 2h after a no-answer, inside 10:00–19:00 their time, up to 6 tries.';
 
 /** Date -> the value a datetime-local input wants, on the rep's clock. */
@@ -75,7 +100,32 @@ export function describeLater(laterAt: string, offset: string | number | null | 
   return `${day} ${String(lead.getUTCHours()).padStart(2, '0')}:${String(lead.getUTCMinutes()).padStart(2, '0')} their time`;
 }
 
+/** "just now", "5 min ago", "3 h ago", "2 d ago", else a date - how long ago a moment was. */
+export function ago(from: Date, now = new Date()) {
+  const s = Math.round((now.getTime() - from.getTime()) / 1000);
+  if (s < 45) return 'just now';
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m} min ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h} h ago`;
+  const d = Math.round(h / 24);
+  if (d < 30) return `${d} d ago`;
+  return from.toLocaleDateString([], { day: '2-digit', month: 'short' });
+}
+
 /** "in 12 min", "in 2h 05m", "in 3d" - how far away a moment is. */
+/** How long ago something happened, for status lines: "just now", "40s ago", "3 min ago", "2h ago".
+ *  relative() below is its future-facing twin ("in 5 min"). */
+export function since(from: Date, now = new Date()) {
+  const s = Math.max(0, Math.round((now.getTime() - from.getTime()) / 1000));
+  if (s < 10) return 'just now';
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  return h < 24 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
+}
+
 export function relative(to: Date, now = new Date()) {
   const m = Math.round((to.getTime() - now.getTime()) / 60000);
   if (m < 1) return 'now';

@@ -62,8 +62,10 @@ async function onAnswered(ccid, userId, burstId, leadId) {
        WHERE c.telnyx_call_id = $1 AND b.id = c.burst_id AND b.winner_call_id IS NOT NULL
          AND (c.disposition IS NULL OR c.disposition = 'cancelled') RETURNING c.lead_id`, [ccid]);
     if (ab) {
-      await releaseLead(ab.lead_id, 'no_answer'); // they were disturbed: counts as an attempt, retry in 2h
+      // Read the number before releasing: this attempt can roll the lead onto its next number,
+      // and the toast must name the line we actually disturbed.
       const { rows: [l] } = await q('SELECT name, phone FROM leads WHERE id = $1', [ab.lead_id]);
+      await releaseLead(ab.lead_id, 'no_answer'); // they were disturbed: counts as an attempt, retry in 2h
       emitToUser(userId, 'lead:abandoned', { leadId: ab.lead_id, name: l?.name ?? null, phone: l?.phone ?? null });
     }
     return;
@@ -137,8 +139,10 @@ export async function cancelOpenLegs(burstId, keepCallId = null) {
      WHERE burst_id = $1 AND disposition IS NULL AND ($2::int IS NULL OR id <> $2)`, [burstId, keepCallId]);
   for (const c of rows) {
     if (!c.answered_at) {
-      await q(`UPDATE calls SET disposition = 'cancelled' WHERE id = $1`, [c.id]);
-      await releaseLead(c.lead_id, 'cancelled');
+      // Guard, not just the SELECT above: the three callers race (a lead answered, the red button,
+      // the rep leg dropping), and only one of them may release the lead.
+      const { rowCount } = await q(`UPDATE calls SET disposition = 'cancelled' WHERE id = $1 AND disposition IS NULL`, [c.id]);
+      if (rowCount) await releaseLead(c.lead_id, 'cancelled');
     }
     if (c.telnyx_call_id) await hangup(c.telnyx_call_id);
   }
@@ -147,19 +151,41 @@ export async function cancelOpenLegs(burstId, keepCallId = null) {
 /** Every leg of a burst with how it ended, for burst:ended (one named tape tile per lead, not one per burst). */
 export async function burstLegs(burstId) {
   const { rows } = await q(
-    `SELECT l.id AS "leadId", l.name, l.phone, c.disposition FROM calls c JOIN leads l ON l.id = c.lead_id WHERE c.burst_id = $1 ORDER BY c.id`, [burstId]);
+    // to_number, not l.phone: this runs after every leg was released, and a released lead may have
+    // already rolled onto its next number. The tape must name what rang.
+    `SELECT l.id AS "leadId", l.name, coalesce(c.to_number, l.phone) AS phone, c.disposition
+     FROM calls c JOIN leads l ON l.id = c.lead_id WHERE c.burst_id = $1 ORDER BY c.id`, [burstId]);
   return rows;
+}
+
+/** A lead card built straight from a claimed lead row, for the ringing preview (call-card v2): the
+ *  rep reads who they're calling while it rings, not only once they say hello. No call row is needed,
+ *  so callId is 0 and lastOutcome/lastNote are left to the live card (leadCard) once one leg wins. */
+export function previewCard(lead) {
+  return {
+    callId: 0, leadId: lead.id, name: lead.name, phone: lead.phone, country: lead.country, segment: lead.segment,
+    utcOffset: lead.utc_offset, hubspotId: lead.hubspot_contact_id, extra: lead.extra ?? {},
+    attempt: (lead.attempt_count ?? 0) + 1, lastOutcome: null, lastNote: null,
+    lastCallAt: lead.last_call_at ?? null, everConnected: null, callCount: lead.attempt_count ?? 0,
+    phones: lead.phones ?? [lead.phone], phoneIdx: lead.phone_idx ?? 1,
+  };
 }
 
 /** Lead card (plan s10): name, country, attempt #, last outcome. Company is not in the export. */
 export async function leadCard(callId) {
   const { rows: [r] } = await q(
-    `SELECT c.id AS "callId", l.id AS "leadId", l.name, l.phone, l.country, l.segment, l.utc_offset AS "utcOffset",
-            l.hubspot_contact_id AS "hubspotId", l.extra, l.attempt_count + 1 AS attempt,
+    `SELECT c.id AS "callId", l.id AS "leadId", l.name, coalesce(c.to_number, l.phone) AS phone, l.country, l.segment,
+            l.utc_offset AS "utcOffset", l.phones, l.phone_idx AS "phoneIdx",
+            l.hubspot_contact_id AS "hubspotId", l.extra, l.attempt_count + 1 AS attempt, l.attempt_count AS "callCount",
             (SELECT p.disposition FROM calls p WHERE p.lead_id = l.id AND p.id <> c.id AND p.disposition IS NOT NULL
              ORDER BY p.started_at DESC LIMIT 1) AS "lastOutcome",
             (SELECT p.notes FROM calls p WHERE p.lead_id = l.id AND p.id <> c.id AND p.notes IS NOT NULL
-             ORDER BY p.started_at DESC LIMIT 1) AS "lastNote"
+             ORDER BY p.started_at DESC LIMIT 1) AS "lastNote",
+            -- History summary for the card (call-card v2): when we last reached out, and whether this lead
+            -- has ever actually connected - the two facts a rep wants before the pitch.
+            (SELECT p.started_at FROM calls p WHERE p.lead_id = l.id AND p.id <> c.id AND p.disposition IS DISTINCT FROM 'cancelled'
+             ORDER BY p.started_at DESC LIMIT 1) AS "lastCallAt",
+            EXISTS (SELECT 1 FROM calls p WHERE p.lead_id = l.id AND p.id <> c.id AND p.disposition = 'connected') AS "everConnected"
      FROM calls c JOIN leads l ON l.id = c.lead_id WHERE c.id = $1`, [callId]);
   return r;
 }
@@ -172,16 +198,21 @@ export async function startBurst(userId, leads, fromOverride = null, extra = {})
   activeBurst.set(userId, burst.id);
   const legs = [];
   for (const lead of leads) {
-    const region = resolveLead({ country: lead.country, phone: lead.phone })?.region ?? 'us';
+    // Caller ID follows the lead's Country column, as it always has - except on an alternate, where
+    // the number's own dial code wins: a +44 alternate on an India-country lead answers far better
+    // from the EU caller ID than the Indian one. The lead's timezone never moves with it.
+    const onAlternate = (lead.phone_idx ?? 1) > 1;
+    const byNumber = onAlternate ? resolveLead({ country: null, phone: lead.phone }) : null;
+    const region = byNumber?.region ?? resolveLead({ country: lead.country, phone: lead.phone })?.region ?? 'us';
     const from = fromOverride ?? await pickFromNumber(region);
     if (!from) { await q(`UPDATE leads SET status = 'queued' WHERE id = $1`, [lead.id]); continue; } // every number at its cap: nothing rang, so no cooldown
     try {
       const ccid = await dialLead({ to: lead.phone, from, userId, burstId: burst.id, leadId: lead.id });
-      await q('INSERT INTO calls (lead_id, burst_id, telnyx_call_id, from_number) VALUES ($1, $2, $3, $4)', [lead.id, burst.id, ccid, from]);
-      legs.push({ leadId: lead.id, name: lead.name, phone: lead.phone, country: lead.country, from });
+      await q('INSERT INTO calls (lead_id, burst_id, telnyx_call_id, from_number, to_number) VALUES ($1, $2, $3, $4, $5)', [lead.id, burst.id, ccid, from, lead.phone]);
+      legs.push({ leadId: lead.id, name: lead.name, phone: lead.phone, country: lead.country, from, card: previewCard(lead) });
     } catch (e) {
       console.error('dial failed', lead.phone, e.message);
-      await q(`INSERT INTO calls (lead_id, burst_id, from_number, disposition) VALUES ($1, $2, $3, 'failed')`, [lead.id, burst.id, from]);
+      await q(`INSERT INTO calls (lead_id, burst_id, from_number, to_number, disposition) VALUES ($1, $2, $3, $4, 'failed')`, [lead.id, burst.id, from, lead.phone]);
       await releaseLead(lead.id, 'cancelled'); // the phone never rang: back in 10 min, no attempt consumed
       emitToUser(userId, 'lead:failed', { leadId: lead.id, name: lead.name, phone: lead.phone, error: e.message });
     }

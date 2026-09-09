@@ -1,38 +1,59 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
-import { API, api, post } from './api';
+import { API, api, post, patch } from './api';
+import { SUB_OUTCOME_LABEL } from './format';
 import { useSoftphone } from './useSoftphone';
 
 export type Me = { id: number; email: string; phone: string | null };
 export type Card = {
   callId: number; leadId: number; name: string | null; phone: string; country: string | null; segment: string;
   utcOffset: string | number | null; hubspotId: string | null; extra: LeadExtra; attempt: number; lastOutcome: string | null; lastNote: string | null;
+  lastCallAt: string | null; everConnected: boolean | null; callCount: number; // history summary shown on the card
+  phones: string[]; phoneIdx: number; // the lead's numbers in cascade order, and which one is in play
 };
-export type LeadExtra = { email?: string; company?: string; leadStage?: string; lifecycle?: string; origin?: string; title?: string; hubspotUrl?: string; priority?: number };
-export type Stats = { dialed_today: number; connected_today: number; talk_seconds_today: number; queued: number; ready: number; next_open_at: string | null; waiting_gap: number; waiting_window: number };
+export type HistoryRow = { callId: number; at: string; answered: boolean; duration: number | null; disposition: string | null; subOutcome: string | null; reason: string | null; notes: string | null };
+export type LeadExtra = { email?: string; company?: string; leadStage?: string; lifecycle?: string; origin?: string; title?: string; linkedin?: string; hubspotUrl?: string; priority?: number };
+export type Stats = { dialed_today: number; connected_today: number; talk_seconds_today: number; queued: number; ready: number; next_open_at: string | null; waiting_gap: number; waiting_window: number; hubspot?: HubSpot };
+/** The HubSpot inlet's health, for the Up next strip. `configured` false = no token on the server, so the
+ *  strip stays hidden and CSV is the only inlet. `ok` false means the inlet itself is broken (bad token,
+ *  missing scope, the checkbox property was never created) — always shown, unlike per-contact rejects. */
+export type HubSpot = { configured: boolean; ok?: boolean | null; error?: string | null; syncedAt?: string | null; inQueue?: number };
+export type SyncResult = { added: number; resumed: number; reopened: number; removed: number; skipped: number; ticked: number; syncedAt: string };
 export type LastCall = { phone: string; name: string | null; from: string | null; at: Date; outcome: string | null };
 export type LegStatus = 'ringing' | 'answered' | 'cancelled' | 'abandoned';
-export type Leg = { leadId: number; name: string | null; phone: string; country: string | null; from: string; status: LegStatus };
-export type NextLead = { id: number; name: string | null; phone: string; country: string | null; segment: string; utc_offset: string | null; attempt_count: number; status: string; last_outcome: string | null; extra: LeadExtra };
+export type Leg = { leadId: number; name: string | null; phone: string; country: string | null; from: string; status: LegStatus; card?: Card };
+export type NextLead = { id: number; name: string | null; phone: string; phones: string[]; country: string | null; segment: string; utc_offset: string | null; attempt_count: number; status: string; last_outcome: string | null; lastCallAt: string | null; everConnected: boolean | null; extra: LeadExtra; phoneIdx: number; phoneCount: number };
+export type LeadPatch = { name?: string; company?: string; title?: string; email?: string; linkedin?: string; leadStage?: string; phones?: string[] };
 export type FromNumber = { number: string; region: 'india' | 'eu' | 'us'; usedToday: number; cap: number; available: boolean };
 export type Rep = 'disconnected' | 'ringing' | 'connected';
 export type Phase = 'idle' | 'ringing' | 'live' | 'ended';
 export type Outcome = 'connected' | 'no_answer' | 'later' | 'invalid';
 export type EventKind = 'sys' | 'dialing' | 'answered' | 'connected' | 'no_answer' | 'later' | 'cancelled' | 'failed' | 'ended' | 'error';
-export type ActivityEvent = { id: string; at: Date; kind: EventKind; text: string; sub?: string; phone?: string };
+export type ActivityEvent = { id: string; at: Date; kind: EventKind; text: string; sub?: string; phone?: string; company?: string };
 export type Mode = 'auto' | 'burst';
 export type Run = { mode: Mode; since: Date; endAfter: boolean };
 export type LastRun = { mode: Mode; since: Date; until: Date };
 export type HeldBack = { name: string | null; phone: string; at: string };
 type SessionState = { repUp: boolean; burstId: number | null; phase: Phase; legs: Leg[]; card: Card | null; answeredAt: string | null; duration: number | null };
 type BurstLeg = { leadId: number; name: string | null; phone: string; disposition: string | null };
-export type ImportResult = { inserted: number; updated: number; skipped: { line: number; reason: string }[]; warnings: { line: number; reason: string }[] };
-type ActivityRow = { callId: number; name: string | null; phone: string; country: string | null; from: string | null; startedAt: string; answered: boolean; duration: number | null; disposition: string | null; notes: string | null; burstWon: boolean };
+export type ImportResult = { inserted: number; updated: number; withAlternates: number; skipped: { line: number; reason: string }[]; warnings: { line: number; reason: string }[] };
+type ActivityRow = { callId: number; name: string | null; phone: string; country: string | null; from: string | null; startedAt: string; answered: boolean; duration: number | null; disposition: string | null; subOutcome: string | null; notes: string | null; burstWon: boolean };
 
 const label = (name: string | null, phone: string) => name || phone;
 const FEED_MAX = 200;
 let seq = 0;
 const OUTCOME_TEXT: Record<Outcome, string> = { connected: 'Connected', no_answer: 'No answer', later: 'Call later', invalid: 'Wrong number' };
+
+/** The feed/tape kind for a settled outcome, chosen so the run tape colours by the sub-outcome the rep
+ *  picked (call-card v2) while reusing the existing tile colours: a connected 'Not interested' reads
+ *  coral, a booked follow-up reads blue, without Campaign needing new colours. */
+function feedKind(outcome: Outcome | string, sub?: string | null): EventKind {
+  if (sub === 'follow_up' || sub === 'callback') return 'later';
+  if (sub === 'not_interested') return 'failed';
+  if (sub === 'not_qualified') return 'no_answer';
+  if (sub === 'interested') return 'connected';
+  return outcome === 'invalid' ? 'failed' : (outcome as EventKind);
+}
 
 /** Today's calls from the server become feed entries, so a page reload loses nothing. */
 function rowEvent(r: ActivityRow): ActivityEvent {
@@ -40,7 +61,10 @@ function rowEvent(r: ActivityRow): ActivityEvent {
   const at = new Date(r.startedAt);
   const id = 'c' + r.callId;
   switch (r.disposition) {
-    case 'connected': return { id, at, kind: 'connected', text: who, sub: `Connected · ${r.duration ?? 0}s${r.notes ? ' · ' + r.notes : ''}` };
+    case 'connected': {
+      const lbl = (r.subOutcome && SUB_OUTCOME_LABEL[r.subOutcome]) || 'Connected';
+      return { id, at, kind: feedKind('connected', r.subOutcome), text: who, sub: `${lbl} · ${r.duration ?? 0}s${r.notes ? ' · ' + r.notes : ''}` };
+    }
     case 'later': return { id, at, kind: 'later', text: who, sub: `Call later${r.notes ? ' · ' + r.notes : ''}` };
     case 'no_answer': return { id, at, kind: 'no_answer', text: who, sub: r.answered ? `Answered ${r.duration ?? 0}s, saved as no answer` : 'No answer' };
     case 'cancelled': return { id, at, kind: 'cancelled', text: who, sub: r.burstWon ? 'Cancelled — the other lead answered first' : 'Cancelled — dialing stopped' };
@@ -75,6 +99,8 @@ export function useDialer(me: Me) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState('');                             // shared by the handset Note tile and the lead card
+  const [callerName, setCallerName] = useState('');                 // unknown-number capture: who this manual dial turned out to be
+  const [callerCompany, setCallerCompany] = useState('');
   const [lastCall, setLastCall] = useState<LastCall | null>(null); // the handset's "last call" strip + redial
   const [prefill, setPrefill] = useState<string | null>(null);     // a number handed to the handset from Up next / Activity (tap-to-dial)
   // Auto dial / Burst dial run. Lives here, not in the page, so switching tabs or a lead answering elsewhere keeps it.
@@ -92,8 +118,8 @@ export function useDialer(me: Me) {
     setFeed((f) => [{ id: 'e' + (++seq), at: new Date(), kind, text, sub, phone }, ...f].slice(0, FEED_MAX)), []);
   const sys = useCallback((text: string) => push('sys', text), [push]);
   /** A feed row that also lands on the run's tape (when a run is on and the call was not a manual dial). */
-  const tapePush = useCallback((kind: EventKind, text: string, sub?: string, phone?: string) => {
-    const e: ActivityEvent = { id: 'e' + (++seq), at: new Date(), kind, text, sub, phone };
+  const tapePush = useCallback((kind: EventKind, text: string, sub?: string, phone?: string, company?: string) => {
+    const e: ActivityEvent = { id: 'e' + (++seq), at: new Date(), kind, text, sub, phone, company };
     setFeed((f) => [e, ...f].slice(0, FEED_MAX));
     if (runRef.current && !manualRef.current) setRunTape((t) => [...t, e]);
   }, []);
@@ -135,7 +161,7 @@ export function useDialer(me: Me) {
     });
     socket.on('burst:started', (p: { legs: Omit<Leg, 'status'>[]; manual?: boolean; heldBack?: HeldBack[] }) => {
       manualRef.current = !!p.manual;
-      setLegs(p.legs.map((l) => ({ ...l, status: 'ringing' }))); setCard(null); setDuration(null); setAnsweredAt(null); setEndCause(null); setPhase('ringing'); setNote('');
+      setLegs(p.legs.map((l) => ({ ...l, status: 'ringing' }))); setCard(null); setDuration(null); setAnsweredAt(null); setEndCause(null); setPhase('ringing'); setNote(''); setCallerName(''); setCallerCompany('');
       setLastBurst(null); setHeldBack(p.heldBack ?? []);
       setLastCall({ phone: p.legs[0].phone, name: p.legs[0].name, from: p.legs[0].from, at: new Date(), outcome: null });
       push('dialing', p.legs.map((l) => label(l.name, l.phone)).join('  ·  '), `Dialing ${p.legs.length} lead${p.legs.length === 1 ? '' : 's'}`, p.legs.length === 1 ? p.legs[0].phone : undefined);
@@ -235,18 +261,55 @@ export function useDialer(me: Me) {
     }),
     // DTMF while bridged (IVR menus, extensions). Not through runCmd(): a keypress must never flip `busy`.
     sendDtmf: (digits: string) => post('/api/session/dtmf', { digits }).catch((e) => setErr((e as Error).message)),
-    disposition: (outcome: Outcome, opts: { laterAt?: string; notes?: string } = {}) => runCmd('save outcome', async () => {
+    callerName, setCallerName, callerCompany, setCallerCompany,
+    leadHistory: (leadId: number) => api<HistoryRow[]>(`/api/leads/${leadId}/history`),
+    // Inline lead edits from the panel: update the card and Up next at once (snappy), then reconcile
+    // with the server's normalised result. Persists straight to the lead, so the next attempt has it.
+    patchLead: async (leadId: number, p: LeadPatch) => {
+      const ex: Partial<LeadExtra> = {};
+      for (const k of ['company', 'title', 'email', 'linkedin', 'leadStage'] as const) if (k in p) ex[k] = p[k];
+      const nm = (c: string | null) => ('name' in p ? (p.name?.trim() || null) : c);
+      setCard((c) => (c && c.leadId === leadId ? { ...c, name: nm(c.name), phones: p.phones ?? c.phones, extra: { ...c.extra, ...ex } } : c));
+      setUpNext((list) => list && list.map((l) => (l.id === leadId
+        ? { ...l, name: nm(l.name), phones: p.phones ?? l.phones, phoneCount: p.phones ? p.phones.length : l.phoneCount, extra: { ...l.extra, ...ex } }
+        : l)));
+      try {
+        const r = await patch<{ name: string | null; extra: LeadExtra; phones: string[]; phoneIdx: number }>(`/api/leads/${leadId}`, p);
+        setCard((c) => (c && c.leadId === leadId ? { ...c, name: r.name, extra: r.extra, phones: r.phones, phoneIdx: r.phoneIdx, phone: r.phones[r.phoneIdx - 1] ?? c.phone } : c));
+      } catch (e) { setErr((e as Error).message); }
+    },
+    disposition: (outcome: Outcome, opts: { laterAt?: string; notes?: string; subOutcome?: string; reason?: string } = {}) => runCmd('save outcome', async () => {
       if (!card) return;
       await post('/api/session/disposition', {
-        callId: card.callId, outcome, notes: (opts.notes ?? note) || undefined,
+        callId: card.callId, outcome, subOutcome: opts.subOutcome, reason: opts.reason || undefined,
+        notes: (opts.notes ?? note) || undefined,
         laterAt: opts.laterAt ? new Date(opts.laterAt).toISOString() : undefined,
+        name: callerName.trim() || undefined, company: callerCompany.trim() || undefined,
       });
-      const who = label(card.name, card.phone);
+      const company = card.extra?.company || undefined;
+      const who = callerName.trim() || card.name || company || label(null, card.phone);
       const n = (opts.notes ?? note).trim();
-      tapePush(outcome === 'invalid' ? 'failed' : outcome, who, OUTCOME_TEXT[outcome] + (n ? ' · ' + n : ''), card.phone);
+      const lbl = (opts.subOutcome && SUB_OUTCOME_LABEL[opts.subOutcome]) || OUTCOME_TEXT[outcome];
+      const bits = [lbl, opts.reason, n].filter(Boolean).join(' · ');
+      tapePush(feedKind(outcome, opts.subOutcome), who, bits, card.phone, company && company !== who ? company : undefined);
       setCard(null); setDuration(null); setAnsweredAt(null); setEndCause(null); setPhase('idle'); setLegs([]); refresh();
-      setNote(''); setLastCall((lc) => lc && { ...lc, outcome });
+      setNote(''); setCallerName(''); setCallerCompany(''); setLastCall((lc) => lc && { ...lc, outcome });
       setRun((r) => { if (r?.endAfter) { setLastRun({ mode: r.mode, since: r.since, until: new Date() }); return null; } return r; });
+    }),
+    // "Sync now" on Up next. Start dialing and opening Up next already pull on their own, so this is
+    // the fallback for a rep who ticked something in HubSpot and does not want to wait even that long.
+    syncNow: () => runCmd('sync with HubSpot', async () => {
+      const r = await post<SyncResult>('/api/leads/sync');
+      const bits = [
+        r.added && `${r.added} added`,
+        r.reopened && `${r.reopened} back for another run`,
+        r.resumed && `${r.resumed} put back`,
+        r.removed && `${r.removed} removed — unticked in HubSpot`,
+        r.skipped && `${r.skipped} skipped — no phone number`,
+      ].filter(Boolean).join(' · ');
+      sys(bits ? `HubSpot: ${bits}` : `HubSpot: nothing new — ${r.ticked} contact${r.ticked === 1 ? '' : 's'} ticked`);
+      refresh();
+      return r;
     }),
     upload: (file: File) => runCmd('import', async () => {
       const fd = new FormData(); fd.append('file', file);

@@ -6,8 +6,9 @@ import { repUp, activeBurst } from '../state.js';
 import { claimLeads, releaseLead, pickFromNumber, sweepStuckLeads, listFromNumbers } from '../lib/queue.js';
 import { resolveLead, segmentFor } from '../lib/countries.js';
 import { normalizePhone } from '../lib/import.js';
-import { startBurst, cancelOpenLegs, stopRepAudio, leadCard, burstLegs } from '../lib/burst.js';
+import { startBurst, cancelOpenLegs, stopRepAudio, leadCard, burstLegs, previewCard } from '../lib/burst.js';
 import { dialRep, hangup, ensureCredential, webrtcToken, sipDestination, sendDtmf } from '../telnyx.js';
+import { pullBeforeRead } from '../lib/hubspot.js';
 import { LEGS_PER_BURST } from '../config.js';
 
 export const router = express.Router();
@@ -31,7 +32,8 @@ async function snapshot(userId) {
   if (burstId) {
     const { rows } = await q(
       `SELECT c.id, c.lead_id AS "leadId", c.answered_at AS "answeredAt", c.duration, c.disposition, c.from_number AS "from",
-              l.name, l.phone, l.country, b.winner_call_id AS "winnerId"
+              l.id, l.name, l.phone, l.country, l.segment, l.utc_offset, l.hubspot_contact_id, l.extra, l.attempt_count,
+              l.phones, l.phone_idx, b.winner_call_id AS "winnerId"
        FROM bursts b JOIN calls c ON c.burst_id = b.id JOIN leads l ON l.id = c.lead_id WHERE b.id = $1 ORDER BY c.id`, [burstId]);
     const winner = rows.find((r) => r.id === r.winnerId);
     if (winner && !winner.disposition) {
@@ -39,7 +41,8 @@ async function snapshot(userId) {
     }
     const open = rows.filter((r) => !r.disposition && !r.answeredAt);
     if (!winner && open.length) {
-      return { ...idle, burstId, phase: 'ringing', legs: open.map((r) => ({ leadId: r.leadId, name: r.name, phone: r.phone, country: r.country, from: r.from, status: 'ringing' })) };
+      // Ringing preview (call-card v2): each open leg carries a card so the rep reads the lead while it rings.
+      return { ...idle, burstId, phase: 'ringing', legs: open.map((r) => ({ leadId: r.leadId, name: r.name, phone: r.phone, country: r.country, from: r.from, status: 'ringing', card: previewCard(r) })) };
     }
     activeBurst.delete(userId); // nothing left in flight: the map entry was stale
   }
@@ -117,6 +120,7 @@ router.post('/burst', async (req, res) => {
   if (!guardBurst(req, res)) return;
   try {
     if (!(await listFromNumbers()).some((n) => n.available)) return refuse(req, res, 409, MSG.capped); // refuse before claiming: nothing to cool down
+    await pullBeforeRead(req.userId); // a contact ticked seconds ago is dialable on this very press
     await sweepStuckLeads();
     const legs = req.body?.legs === 1 ? 1 : LEGS_PER_BURST;
     const leads = await claimLeads(req.userId, legs, req.body?.segment ?? null);
@@ -146,10 +150,17 @@ router.post('/dial', async (req, res) => {
     if (!chosen.available) return refuse(req, res, 400, 'This caller ID has hit its daily cap — choose another.');
 
     const resolved = resolveLead({ country: null, phone: to });
+    // startBurst dials the row's `phone`, and that moves as a multi-number lead rolls - so point it
+    // at the number the rep actually typed. If this lead already carries that number in its list,
+    // keep the list and just move to it; otherwise it is a plain one-number manual lead.
     const { rows: [lead] } = await q(
-      `INSERT INTO leads (hubspot_contact_id, phone, utc_offset, segment, status, user_id)
-       VALUES ($1, $2, $3, $4, 'in_flight', $5)
-       ON CONFLICT (hubspot_contact_id) DO UPDATE SET status = 'in_flight', user_id = $5 RETURNING *`,
+      `INSERT INTO leads (hubspot_contact_id, phone, phones, utc_offset, segment, status, user_id)
+       VALUES ($1, $2, ARRAY[$2], $3, $4, 'in_flight', $5)
+       ON CONFLICT (hubspot_contact_id) DO UPDATE
+         SET status = 'in_flight', user_id = $5, phone = EXCLUDED.phone,
+             phones = CASE WHEN EXCLUDED.phone = ANY(leads.phones) THEN leads.phones ELSE EXCLUDED.phones END,
+             phone_idx = coalesce(array_position(leads.phones, EXCLUDED.phone), 1)
+       RETURNING *`,
       ['manual-' + to, to, resolved?.offset ?? null, segmentFor(resolved?.region), req.userId]);
     res.json(await startBurst(req.userId, [lead], from));
   } catch (e) { refuse(req, res, 502, e.message); }
@@ -193,21 +204,42 @@ router.post('/hangup-lead', async (req, res) => {
   res.json({ ok: true, live: false });
 });
 
-// Outcome after the call (plan s7). Rep-controlled; this is what unblocks the next dial.
+// Outcome after the call (plan s7, call-card v2). The rep presses one of seven tiles; the client maps
+// them onto the four dispositions and sends the tile itself as `subOutcome`. Two sub-outcomes book a
+// time (follow_up / callback) - a connect that comes back, still counted as a connect. `reason` is the
+// optional chip on Not interested. name/company let the rep put a face on a manual "unknown" number.
+const SUB_OUTCOMES = ['interested', 'follow_up', 'callback', 'not_interested', 'not_qualified'];
+const NEEDS_TIME = new Set(['follow_up', 'callback']);
 router.post('/disposition', async (req, res) => {
-  const { callId, outcome, laterAt, notes } = req.body ?? {};
+  const { callId, outcome, subOutcome, reason, laterAt, notes, name, company } = req.body ?? {};
   if (!['connected', 'no_answer', 'later', 'invalid'].includes(outcome)) return res.status(400).json({ error: 'Choose an outcome.' });
-  if (outcome === 'later' && !laterAt) return res.status(400).json({ error: 'Choose a date and time first.' });
-  if (outcome === 'later' && new Date(laterAt).getTime() < Date.now() - 60_000) return res.status(400).json({ error: 'That time has already passed.' });
+  const sub = subOutcome ? String(subOutcome) : null;
+  if (sub && !SUB_OUTCOMES.includes(sub)) return res.status(400).json({ error: 'unknown outcome ' + sub });
+  if (sub && outcome !== 'connected') return res.status(400).json({ error: 'that outcome does not take a sub-outcome' });
+  const needsTime = outcome === 'later' || (sub && NEEDS_TIME.has(sub));
+  if (needsTime && !laterAt) return res.status(400).json({ error: 'Choose a date and time first.' });
+  if (needsTime && new Date(laterAt).getTime() < Date.now() - 60_000) return res.status(400).json({ error: 'That time has already passed.' });
   const { rows: [c] } = await q(
     'SELECT c.id, c.lead_id, c.burst_id FROM calls c JOIN bursts b ON b.id = c.burst_id WHERE c.id = $1 AND b.user_id = $2',
     [callId, req.userId]);
   if (!c) return res.status(404).json({ error: 'call not found' });
   const note = String(notes ?? '').trim().slice(0, 2000) || null;
+  const reasonVal = reason ? String(reason).trim().slice(0, 120) || null : null;
+  // A face for a manual "unknown" number: save what the rep typed so the next attempt has a real card.
+  // extra || jsonb merges, so a blank company never wipes an existing one.
+  const nm = String(name ?? '').trim().slice(0, 120);
+  const co = String(company ?? '').trim().slice(0, 120);
+  if (nm || co) await q(
+    `UPDATE leads SET name = coalesce(NULLIF($2, ''), name), extra = extra || $3::jsonb WHERE id = $1`,
+    [c.lead_id, nm, JSON.stringify(co ? { company: co } : {})]);
   // Idempotent: a repeat submit for the same call (double-click, second tab) is a no-op, not a second attempt.
   // dispositioned_at - (answered_at + duration) is the rep's wrap-up time (manual Next makes it worth measuring).
-  const { rowCount } = await q('UPDATE calls SET disposition = $2, notes = $3, dispositioned_at = now() WHERE id = $1 AND disposition IS NULL', [c.id, outcome, note]);
-  if (rowCount) await releaseLead(c.lead_id, outcome, laterAt ?? null);
+  const { rowCount } = await q(
+    'UPDATE calls SET disposition = $2, sub_outcome = $4, reason = $5, notes = $3, dispositioned_at = now() WHERE id = $1 AND disposition IS NULL',
+    [c.id, outcome, note, sub, reasonVal]);
+  // A booked connect (follow_up / callback) passes its time to releaseLead so the lead comes back; a plain
+  // connect passes none and leaves the queue. NEEDS_TIME is what routes the two branches in queue.js.
+  if (rowCount) await releaseLead(c.lead_id, outcome, (needsTime ? laterAt : null) ?? null);
   if (activeBurst.get(req.userId) === c.burst_id) activeBurst.delete(req.userId);
   res.json({ ok: true });
 });

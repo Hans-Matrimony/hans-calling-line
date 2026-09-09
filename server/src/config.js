@@ -2,6 +2,12 @@
 // the rep is the trigger. IGNORE_WINDOWS=true lets the 2-phone plumbing test run at any hour.
 export const MAX_ATTEMPTS = 6;
 export const MIN_GAP_HOURS = 2;
+// Multi-number leads: tries spent on one number before rolling to the lead's next one, and the
+// shorter gap before that fresh number is first rung (a new channel, so it need not wait the full
+// MIN_GAP_HOURS - but not seconds later either). MAX_ATTEMPTS stays the floor for the whole lead:
+// the ceiling is GREATEST(MAX_ATTEMPTS, ATTEMPTS_PER_NUMBER * how many numbers the lead has).
+export const ATTEMPTS_PER_NUMBER = 3;
+export const ROLL_GAP_MINUTES = 15;
 export const LEGS_PER_BURST = 2;
 export const DIAL_TIMEOUT_SECS = 30;
 export const DAILY_CAP_PER_NUMBER = 100; // was 50; lowered again if a caller ID gets flagged (PLAN-v2 s8)

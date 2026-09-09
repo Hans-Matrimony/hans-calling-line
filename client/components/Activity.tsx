@@ -1,11 +1,11 @@
 'use client';
 import type { ActivityEvent, EventKind } from '../lib/useDialer';
 import { clock, prettyPhone } from '../lib/format';
+import { Phone } from './icons';
 
 const LAMP: Partial<Record<EventKind, string>> = {
   dialing: 'amber', answered: 'green', connected: 'green', later: 'blue', failed: 'coral', error: 'coral',
 };
-const Phone = () => <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25c1.1.37 2.3.57 3.6.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1L6.6 10.8z" /></svg>;
 
 /** The Activity tab: today's events, newest first. Restored from the server on reload; live events prepend.
  *  Rows that belong to a number carry a call button that loads it into the handset. */

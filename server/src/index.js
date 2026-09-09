@@ -11,6 +11,7 @@ import { router as auth, userIdFromCookieHeader } from './auth.js';
 import { router as leads } from './routes/leads.js';
 import { router as session } from './routes/session.js';
 import { router as webhooks } from './routes/webhooks.js';
+import { startPolling } from './lib/hubspot.js';
 
 const app = express();
 const origin = process.env.CLIENT_ORIGIN ?? 'http://localhost:3000';
@@ -23,7 +24,7 @@ app.use((req, res, next) => { // CORS for the Next.js client on another port/ori
   res.header('Access-Control-Allow-Origin', origin);
   res.header('Access-Control-Allow-Credentials', 'true');
   res.header('Access-Control-Allow-Headers', 'Content-Type');
-  res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PATCH,OPTIONS');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
@@ -53,5 +54,7 @@ io.on('connection', (s) => s.join(`user:${s.data.userId}`));
 setIo(io);
 
 const port = Number(process.env.PORT ?? 3001);
-server.listen(port, () =>
-  console.log(`dialer server on :${port}  webhooks -> ${process.env.PUBLIC_URL || '(PUBLIC_URL unset)'}/webhooks/telnyx`));
+server.listen(port, () => {
+  console.log(`dialer server on :${port}  webhooks -> ${process.env.PUBLIC_URL || '(PUBLIC_URL unset)'}/webhooks/telnyx`);
+  startPolling(); // HubSpot inlet; a no-op until HUBSPOT_TOKEN is set
+});

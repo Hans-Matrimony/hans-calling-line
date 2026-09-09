@@ -1,7 +1,8 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import type { useDialer, FromNumber } from '../lib/useDialer';
-import { DIAL_TIMEOUT, OUTCOME_LABEL, clock, mmss, prettyPhone, splitName } from '../lib/format';
+import { DIAL_TIMEOUT, OUTCOME_LABEL, clock, prettyPhone, splitName } from '../lib/format';
+import { Phone, Mic, MicOff, Keypad as KeypadIcon, Delete, ArrowRight } from './icons';
 
 type D = ReturnType<typeof useDialer>;
 
@@ -37,12 +38,8 @@ const REGION: Record<FromNumber['region'], { iso: string; name: string }> = {
 const pref = (key: string, initial: string) => { try { return localStorage.getItem(key) ?? initial; } catch { return initial; } };
 const savePref = (key: string, v: string) => { try { localStorage.setItem(key, v); } catch { /* private mode etc. */ } };
 
-/* Icons: one handset glyph does Call and Hang up (rotated 135deg by CSS), the way a physical handset is lifted and dropped. */
-const Phone = () => <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25c1.1.37 2.3.57 3.6.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1L6.6 10.8z" /></svg>;
-const Mic = ({ off }: { off?: boolean }) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" />{off && <path d="M4 4l16 16" />}</svg>;
-const Grid = () => <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>{[5, 12, 19].flatMap((y) => [5, 12, 19].map((x) => <circle key={x + '-' + y} cx={x} cy={y} r="2" />))}</svg>;
-const NoteIcon = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M6 3h9l4 4v14H6z" /><path d="M9 12h7M9 16h7" /></svg>;
-const Backspace = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M9 5h11v14H9l-6-7z" /><path d="M12 9l5 5M17 9l-5 5" /></svg>;
+/* The Call/Hang-up button reuses one handset glyph, rotated 135deg by CSS on hang up — the way a
+ * physical handset is lifted and dropped. All icons come from the shared ./icons set. */
 
 /** The handset: a phone-shaped panel that is the rep's primary way to place a call by hand (PLAN-v2 s8, CallHippo
  *  parity). Keypad view while idle; in-call view (Mute / Dialpad / Note / Hang up) the moment anything is dialing,
@@ -119,7 +116,7 @@ function Keypad({ d }: { d: D }) {
         </span>
         <input ref={digitsRef} className="hs-digits" value={local} placeholder={iso ? 'Enter number' : 'Code and number'} inputMode="tel" autoComplete="off" spellCheck={false} aria-label="Number to call"
           onChange={(e) => type(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') dial(); }} />
-        <button className="hs-bs" tabIndex={-1} onMouseDown={(e) => e.preventDefault()} onClick={() => setLocal((s) => s.slice(0, -1))} disabled={!local} aria-label="Delete last digit"><Backspace /></button>
+        <button className="hs-bs" tabIndex={-1} onMouseDown={(e) => e.preventDefault()} onClick={() => setLocal((s) => s.slice(0, -1))} disabled={!local} aria-label="Delete last digit"><Delete /></button>
       </div>
 
       <div className="hs-keys">
@@ -128,7 +125,7 @@ function Keypad({ d }: { d: D }) {
 
       <div className="hs-action">
         <button className="hs-call" onClick={dial} disabled={!canDial} aria-label="Call"><Phone /></button>
-        <p className="hs-hint">{why || (valid ? `Call ${prettyPhone(full)}` : ' ')}</p>
+        <p className="hs-hint">{why || (valid ? <>Call {prettyPhone(full)} <kbd>Enter</kbd></> : ' ')}</p>
       </div>
 
       <label className="hs-from">
@@ -146,72 +143,50 @@ function Keypad({ d }: { d: D }) {
   );
 }
 
+/** In-call control rail (call-card v2): a slim horizontal bar under the lead stage. Mute, keypad and
+ *  hang up while live; the ringing timer and give-up hint while ringing; a pointer to the card while
+ *  the outcome is pending. Identity, timer and note all live on the card now, so nothing is repeated. */
 function InCall({ d }: { d: D }) {
   const [pad, setPad] = useState(false);
-  const [noteOpen, setNoteOpen] = useState(false);
   const [sent, setSent] = useState('');
   const [, tick] = useState(0);
   const [ringSince, setRingSince] = useState<Date | null>(null);
   useEffect(() => { setRingSince(d.phase === 'ringing' ? new Date() : null); }, [d.phase]);
-  useEffect(() => { if (d.phase === 'ended') setNoteOpen(false); }, [d.phase]); // after the call the lead card is the one note field
-  useEffect(() => {
-    if (d.phase !== 'ringing' && !(d.phase === 'live' && d.answeredAt)) return;
-    const t = setInterval(() => tick((n) => n + 1), 1000);
-    return () => clearInterval(t);
-  }, [d.answeredAt, d.phase]);
+  useEffect(() => { if (d.phase !== 'ringing') return; const t = setInterval(() => tick((n) => n + 1), 1000); return () => clearInterval(t); }, [d.phase]);
 
   const live = d.phase === 'live';
   const ringing = d.phase === 'ringing';
   const ended = d.phase === 'ended';
   const ringSecs = ringSince ? Math.max(0, Math.floor((Date.now() - ringSince.getTime()) / 1000)) : 0;
   const late = ringing && ringSecs >= DIAL_TIMEOUT - 5;
-  const secs = d.phase === 'ended' ? d.duration ?? 0 : d.answeredAt ? Math.max(0, Math.floor((Date.now() - d.answeredAt.getTime()) / 1000)) : 0;
-  const c = d.card;
-  const leg0 = d.legs[0];
-  const phone = c?.phone ?? leg0?.phone ?? '';
-  const name = splitName(c?.name ?? (d.legs.length === 1 ? leg0?.name ?? null : null)).name;
-  const region = (() => { const r = d.fromNumbers.find((n) => n.number === leg0?.from)?.region; return r ? REGION[r] : null; })();
-  const many = ringing && d.legs.length > 1;
-
-  const eyebrow = ringing ? `Calling from your ${region?.name ?? 'Eazybe'} number` : live ? 'On the line' : 'Call ended';
-  const title = many ? `Ringing ${d.legs.length} leads` : name || prettyPhone(phone) || '—';
-  const sub = many ? d.legs.map((l) => l.name || prettyPhone(l.phone)).join('  ·  ') : name ? prettyPhone(phone) : null;
+  const region = (() => { const r = d.fromNumbers.find((n) => n.number === d.legs[0]?.from)?.region; return d.legs.length === 1 && r ? REGION[r] : null; })();
   const press = (k: string) => { setSent((s) => (s + k).slice(-24)); d.sendDtmf(k); };
 
   return (
-    <section className={'hs ' + d.phase} aria-label="Call in progress">
-      <div className="hs-status">
-        <span className="hs-eyebrow">{eyebrow}</span>
-        <div className="hs-who">{title}</div>
-        {sub && <div className="hs-sub mono">{sub}</div>}
-        <div className={'hs-timer' + (late ? ' late' : '')}>{ringing ? `Ringing · ${ringSecs}s` : mmss(secs)}</div>
-      </div>
-
+    <section className={'callbar ' + d.phase} aria-label="Call controls">
       {pad && live && (
         <div className="hs-dtmf">
           <div className="hs-keys dtmf">{KEYS.map(([k, sub]) => <button key={k} onClick={() => press(k)} aria-label={'Send ' + k}><span>{k}</span><small>{sub}</small></button>)}</div>
           <p className="hs-sent mono">{sent || 'Tones go to the other side — for menus and extensions.'}</p>
         </div>
       )}
-
-      {noteOpen && !ended && (
-        <textarea className="field" rows={3} value={d.note} onChange={(e) => d.setNote(e.target.value)} autoFocus
-          placeholder="Note — you can finish it on the lead card after the call" aria-label="Call note" />
-      )}
-
-      <div className="hs-tiles">
-        <button className={d.softphone.muted ? 'on' : ''} onClick={d.softphone.toggleMute} disabled={!live} aria-pressed={d.softphone.muted}><Mic off={d.softphone.muted} /><span>{d.softphone.muted ? 'Unmute' : 'Mute'}</span></button>
-        <button className={pad ? 'on' : ''} onClick={() => setPad((v) => !v)} disabled={!live} aria-pressed={pad}><Grid /><span>Dialpad</span></button>
-        <button className={noteOpen || d.note ? 'on' : ''} onClick={() => setNoteOpen((v) => !v)} disabled={ended} aria-pressed={noteOpen}><NoteIcon /><span>Note</span></button>
-      </div>
-
-      <div className="hs-action">
-        {ended
-          ? <p className="hs-hint">Save the outcome on the lead card.</p>
-          : <>
-            <button className={'hs-call hang' + (ringing ? ' ringing' : '')} onClick={d.hangupLead} disabled={d.busy} aria-label={ringing ? 'Stop dialing' : 'Hang up'}><Phone /></button>
-            <p className="hs-hint">{ringing ? (late ? `Gives up at ${DIAL_TIMEOUT}s` : d.legs.length > 1 ? 'Stop dialing both' : 'Stop dialing') : 'Hang up'}</p>
-          </>}
+      <div className="callbar-row">
+        {ringing ? (
+          <span className={'callbar-info' + (late ? ' late' : '')}><b>{d.legs.length > 1 ? 'Ringing both leads' : 'Ringing'}</b><span>{late ? `gives up at ${DIAL_TIMEOUT}s` : `${ringSecs}s`}</span></span>
+        ) : ended ? (
+          <span className="callbar-info">Save the outcome on the card <ArrowRight size={15} /></span>
+        ) : (
+          <>
+            <button className={'ctool' + (d.softphone.muted ? ' on' : '')} onClick={d.softphone.toggleMute} disabled={!live} aria-pressed={d.softphone.muted}>{d.softphone.muted ? <MicOff /> : <Mic />}<span>{d.softphone.muted ? 'Unmute' : 'Mute'}</span></button>
+            <button className={'ctool' + (pad ? ' on' : '')} onClick={() => setPad((v) => !v)} disabled={!live} aria-pressed={pad}><KeypadIcon /><span>Keypad</span></button>
+            {region && <span className="callbar-src">Calling from your {region.name} number</span>}
+          </>
+        )}
+        {!ended && (
+          <button className={'hangbtn' + (ringing ? ' ringing' : '')} onClick={d.hangupLead} disabled={d.busy} aria-label={ringing ? 'Stop dialing' : 'Hang up'}>
+            <Phone /><span>{ringing ? (d.legs.length > 1 ? 'Stop dialing both' : 'Stop dialing') : 'Hang up'}</span>
+          </button>
+        )}
       </div>
     </section>
   );
