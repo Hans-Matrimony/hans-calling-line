@@ -1,5 +1,7 @@
 import { q } from '../db/pool.js';
-import { emitToUser } from '../io.js';
+import { emitToUser, pokeAdmins } from '../io.js';
+import { startLeadRecording } from './recordings.js';
+import { logCall } from './hubspotCalls.js';
 import { activeBurst } from '../state.js';
 import { releaseLead, pickFromNumber } from './queue.js';
 import { resolveLead } from './countries.js';
@@ -60,13 +62,14 @@ async function onAnswered(ccid, userId, burstId, leadId) {
     const { rows: [ab] } = await q(
       `UPDATE calls c SET disposition = 'abandoned', answered_at = now() FROM bursts b
        WHERE c.telnyx_call_id = $1 AND b.id = c.burst_id AND b.winner_call_id IS NOT NULL
-         AND (c.disposition IS NULL OR c.disposition = 'cancelled') RETURNING c.lead_id`, [ccid]);
+         AND (c.disposition IS NULL OR c.disposition = 'cancelled') RETURNING c.id, c.lead_id`, [ccid]);
     if (ab) {
       // Read the number before releasing: this attempt can roll the lead onto its next number,
       // and the toast must name the line we actually disturbed.
       const { rows: [l] } = await q('SELECT name, phone FROM leads WHERE id = $1', [ab.lead_id]);
       await releaseLead(ab.lead_id, 'no_answer'); // they were disturbed: counts as an attempt, retry in 2h
       emitToUser(userId, 'lead:abandoned', { leadId: ab.lead_id, name: l?.name ?? null, phone: l?.phone ?? null });
+      logCall(ab.id).catch((e) => console.warn('hubspot logCall', e.message));
     }
     return;
   }
@@ -83,7 +86,11 @@ async function onAnswered(ccid, userId, burstId, leadId) {
     await stopPlayback(rep);      // end the dialing tick
     await beepThenWait(rep);      // "say hello now"; resolves on playback.ended (or the timeout)
     await bridge(rep, ccid);
+    // Record from here: only a bridged conversation, only the lead leg (the rep's leg lives all shift).
+    // Not awaited and never throws - recording must not touch the call.
+    startLeadRecording(won.call_id, ccid, { kind: 'lead', userId, burstId, leadId });
     emitToUser(userId, 'call:bridged', { callId: won.call_id });
+    pokeAdmins('live');
   } catch (e) {
     // Most common: the lead hung up during the beep window, so bridge hits a dead leg (90015/90018).
     // Never strand the rep in a fake call - silence the rep leg and end this call so the UI leaves 'live'
@@ -100,6 +107,7 @@ async function onAnswered(ccid, userId, burstId, leadId) {
 async function onHangup(p, userId, burstId, leadId) {
   const { rows: [c] } = await q('SELECT id, disposition, answered_at FROM calls WHERE telnyx_call_id = $1', [p.call_control_id]);
   if (!c) return;
+  await q('UPDATE calls SET ended_at = coalesce(ended_at, now()) WHERE id = $1', [c.id]); // ring time for the log; talk time is still duration
 
   if (c.answered_at) {
     // Conversation over. Duration for the record; the disposition is the rep's call (no auto-advance).
@@ -107,6 +115,7 @@ async function onHangup(p, userId, burstId, leadId) {
     const { rows: [d] } = await q(
       `UPDATE calls SET duration = coalesce(duration, EXTRACT(EPOCH FROM (now() - answered_at))::int) WHERE id = $1 RETURNING duration`, [c.id]);
     if (!c.disposition) emitToUser(userId, 'call:ended', { callId: c.id, leadId, duration: d.duration, cause: p.hangup_cause });
+    pokeAdmins('live');
     return;
   }
 
@@ -115,7 +124,10 @@ async function onHangup(p, userId, burstId, leadId) {
     // The WHERE guard turns a redelivered hangup into a no-op instead of a double-counted attempt.
     const dead = /unallocated|invalid_number|number_changed|unassigned/.test(p.hangup_cause ?? '');
     const { rowCount } = await q('UPDATE calls SET disposition = $2 WHERE id = $1 AND disposition IS NULL', [c.id, dead ? 'failed' : 'no_answer']);
-    if (rowCount) await releaseLead(leadId, dead ? 'invalid' : 'no_answer');
+    if (rowCount) {
+      await releaseLead(leadId, dead ? 'invalid' : 'no_answer');
+      logCall(c.id).catch((e) => console.warn('hubspot logCall', e.message)); // nobody answered: no outcome step will follow
+    }
   }
 
   // Every leg settled and nobody won: the burst is over, the rep can click Start calling again.
@@ -126,6 +138,7 @@ async function onHangup(p, userId, burstId, leadId) {
   if (s.open === 0 && !s.answered) {
     activeBurst.delete(userId);
     emitToUser(userId, 'burst:ended', { burstId, result: 'no_answer', legs: await burstLegs(burstId) });
+    pokeAdmins('live');
     const rep = await repLeg(userId);
     if (rep) { await stopPlayback(rep); noAnswerTone(rep).catch((e) => console.warn('noanswer tone', e.message)); }
   }
@@ -219,6 +232,7 @@ export async function startBurst(userId, leads, fromOverride = null, extra = {})
   }
   if (!legs.length) { activeBurst.delete(userId); throw new Error('no legs could be placed'); }
   emitToUser(userId, 'burst:started', { burstId: burst.id, legs, manual: !!fromOverride, ...extra });
+  pokeAdmins('live');
   const rep = await repLeg(userId);
   if (rep) startTick(rep).catch((e) => console.warn('tick failed', e.message)); // rep hears dialing in progress
   return { burstId: burst.id, legs };

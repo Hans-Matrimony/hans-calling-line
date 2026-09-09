@@ -1,7 +1,8 @@
 import express from 'express';
 import { requireAuth } from '../auth.js';
 import { q } from '../db/pool.js';
-import { emitToUser } from '../io.js';
+import { emitToUser, pokeAdmins } from '../io.js';
+import { logCall } from '../lib/hubspotCalls.js';
 import { repUp, activeBurst } from '../state.js';
 import { claimLeads, releaseLead, pickFromNumber, sweepStuckLeads, listFromNumbers } from '../lib/queue.js';
 import { resolveLead, segmentFor } from '../lib/countries.js';
@@ -201,6 +202,7 @@ router.post('/hangup-lead', async (req, res) => {
   activeBurst.delete(req.userId);
   await stopRepAudio(req.userId); // nothing is ringing any more: silence the tick
   emitToUser(req.userId, 'burst:ended', { burstId, result: 'cancelled', legs });
+  pokeAdmins('live');
   res.json({ ok: true, live: false });
 });
 
@@ -239,7 +241,11 @@ router.post('/disposition', async (req, res) => {
     [c.id, outcome, note, sub, reasonVal]);
   // A booked connect (follow_up / callback) passes its time to releaseLead so the lead comes back; a plain
   // connect passes none and leaves the queue. NEEDS_TIME is what routes the two branches in queue.js.
-  if (rowCount) await releaseLead(c.lead_id, outcome, (needsTime ? laterAt : null) ?? null);
+  if (rowCount) {
+    await releaseLead(c.lead_id, outcome, (needsTime ? laterAt : null) ?? null);
+    logCall(c.id).catch((e) => console.warn('hubspot logCall', e.message)); // HubSpot write-back, never on the rep's path
+    pokeAdmins('call');
+  }
   if (activeBurst.get(req.userId) === c.burst_id) activeBurst.delete(req.userId);
   res.json({ ok: true });
 });

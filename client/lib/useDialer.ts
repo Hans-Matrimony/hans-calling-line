@@ -4,7 +4,7 @@ import { API, api, post, patch } from './api';
 import { SUB_OUTCOME_LABEL } from './format';
 import { useSoftphone } from './useSoftphone';
 
-export type Me = { id: number; email: string; phone: string | null };
+export type Me = { id: number; email: string; phone: string | null; role?: 'rep' | 'admin' };
 export type Card = {
   callId: number; leadId: number; name: string | null; phone: string; country: string | null; segment: string;
   utcOffset: string | number | null; hubspotId: string | null; extra: LeadExtra; attempt: number; lastOutcome: string | null; lastNote: string | null;

@@ -38,7 +38,8 @@ else {
 }
 
 // 2. Call Control application
-const appBody = { application_name: NAME, webhook_event_url: webhook, webhook_api_version: '2', outbound: { outbound_voice_profile_id: ovp.id, channel_limit: 10 } };
+// call_cost_in_webhooks: Telnyx sends a call.cost event per leg after hangup - the Wallet's only source.
+const appBody = { application_name: NAME, webhook_event_url: webhook, webhook_api_version: '2', call_cost_in_webhooks: true, outbound: { outbound_voice_profile_id: ovp.id, channel_limit: 10 } };
 let app = await findByName(t.callControlApplications.list());
 if (app) { await t.callControlApplications.update(app.id, appBody); console.log('updated call control app       ', app.id); }
 else { ({ data: app } = await t.callControlApplications.create(appBody)); console.log('created call control app       ', app.id); }

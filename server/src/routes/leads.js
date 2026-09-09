@@ -32,7 +32,7 @@ router.get('/stats', requireAuth, async (req, res) => {
 /** What the Up next strip needs to tell the truth about the HubSpot inlet: whether it is on, whether it
  *  works, when it last ran, and how much of this rep's queue came in through it. Per-contact rejects stay
  *  in the server log by owner's decision; a broken inlet is a different thing and is always shown. */
-async function hubspotPanel(userId) {
+export async function hubspotPanel(userId) {
   const st = hubspotStatus();
   if (!st.configured) return { configured: false };
   const { rows: [r] } = await q(

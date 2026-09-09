@@ -1,6 +1,8 @@
 import express from 'express';
 import { q } from '../db/pool.js';
-import { emitToUser } from '../io.js';
+import { emitToUser, pokeAdmins } from '../io.js';
+import { onCallCost } from '../lib/costs.js';
+import { onRecordingSaved, onRecordingError } from '../lib/recordings.js';
 import { repUp, activeBurst } from '../state.js';
 import { telnyx, decodeState } from '../telnyx.js';
 import { onLeadEvent, cancelOpenLegs, onRepPlaybackEnded } from '../lib/burst.js';
@@ -25,7 +27,11 @@ async function handle(event) {
   const type = d.event_type;
   const p = d.payload ?? {};
   const state = decodeState(p.client_state);
-  console.log('[telnyx]', type, state?.kind ?? '-', String(p.call_control_id ?? '').slice(-8), p.hangup_cause ?? '');
+  console.log('[telnyx]', type, state?.kind ?? '-', String(p.call_control_id ?? '').slice(-8), p.hangup_cause ?? p.total_cost ?? '');
+  // Money and recordings settle per leg, state or not: a leg with no client_state still cost something.
+  if (type === 'call.cost') return onCallCost(p, state, d.occurred_at);
+  if (type === 'call.recording.saved') return onRecordingSaved(p, state);
+  if (type === 'call.recording.error') return onRecordingError(p, state);
   if (!state) return;
   if (state.kind === 'rep') return onRepEvent(type, p, state);
   if (state.kind === 'lead') return onLeadEvent(type, p, state);
@@ -36,6 +42,7 @@ async function onRepEvent(type, p, { userId }) {
   if (type === 'call.answered') {
     repUp.add(userId);
     emitToUser(userId, 'rep:connected', {});
+    pokeAdmins('live');
   }
   if (type === 'call.hangup') {
     repUp.delete(userId);
@@ -45,5 +52,6 @@ async function onRepEvent(type, p, { userId }) {
     const burstId = activeBurst.get(userId);
     if (burstId) { await cancelOpenLegs(burstId); activeBurst.delete(userId); }
     emitToUser(userId, 'rep:disconnected', { cause: p.hangup_cause });
+    pokeAdmins('live');
   }
 }

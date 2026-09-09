@@ -29,13 +29,13 @@ const MSG = {
 
 // Connection health is portal-wide (token, scopes, the property), so one value serves every rep.
 let health = { ok: null, error: null, at: null };
-export const status = () => ({ configured: configured(), ...health });
+export const status = () => ({ configured: configured(), ...health, write });
 const markOk = () => { health = { ok: true, error: null, at: new Date() }; };
 const markBad = (error) => { health = { ok: false, error, at: new Date() }; };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function hs(path, init = {}) {
+export async function hs(path, init = {}) {
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(BASE + path, {
       ...init,
@@ -44,12 +44,26 @@ async function hs(path, init = {}) {
     if (res.status === 429 && attempt < 3) { await sleep(1000 * (attempt + 1)); continue; }
     if (res.ok) return res.json();
     const body = await res.text().catch(() => '');
-    if (res.status === 401) throw new Error(MSG.badToken);
-    if (res.status === 403) throw new Error(MSG.noScope);
-    if (res.status === 429) throw new Error(MSG.rateLimited);
-    throw new Error(`HubSpot ${res.status} on ${path.split('?')[0]}: ${body.slice(0, 300)}`);
+    const err = new Error(res.status === 401 ? MSG.badToken : res.status === 403 ? MSG.noScope : res.status === 429 ? MSG.rateLimited
+      : `HubSpot ${res.status} on ${path.split('?')[0]}: ${body.slice(0, 300)}`);
+    err.status = res.status; err.body = body;
+    throw err;
   }
 }
+
+/** hs() for a multipart body (file upload): fetch must set the boundary header itself. */
+export async function hsRaw(path, init = {}) {
+  const res = await fetch(BASE + path, { ...init, headers: { authorization: 'Bearer ' + token(), ...init.headers } });
+  if (res.ok) return res.json();
+  const body = await res.text().catch(() => '');
+  const err = new Error(`HubSpot ${res.status} on ${path}: ${body.slice(0, 300)}`); err.status = res.status; err.body = body;
+  throw err;
+}
+
+// Write-side health (call logging, file upload) is separate from the inlet's: a read-only token keeps
+// the queue working while the dashboard says calls are not being logged.
+let write = { ok: null, error: null, at: null };
+export const markWrite = (ok, error = null) => { write = { ok, error, at: new Date() }; };
 
 /** Every page of a v3 collection endpoint. */
 async function pages(path, key = 'results') {
@@ -324,7 +338,7 @@ export function startPolling(seconds = Number(process.env.HUBSPOT_POLL_SECONDS ?
   const tick = async () => {
     try {
       if (Date.now() - ownersAt > CACHE_MS) { await mapOwners(); ownersAt = Date.now(); }
-      const { rows } = await q('SELECT id FROM users WHERE hubspot_owner_id IS NOT NULL');
+      const { rows } = await q('SELECT id FROM users WHERE hubspot_owner_id IS NOT NULL AND active');
       for (const u of rows) {
         try { await pullQueue(u.id); }
         catch (e) { console.warn(`[hubspot] sync failed for rep ${u.id}: ${e.message}`); }

@@ -43,3 +43,12 @@ export const Tag = (p: P) => <Svg {...p}><path d="M12.6 2.6A2 2 0 0 0 11.2 2H4a2
 export const MapPin = (p: P) => <Svg {...p}><path d="M20 10c0 5.5-8 12-8 12s-8-6.5-8-12a8 8 0 0 1 16 0z" /><circle cx="12" cy="10" r="2.6" /></Svg>;
 export const Activity = (p: P) => <Svg {...p}><path d="M22 12h-3.5l-2.5 7-5-16-2.5 9H3" /></Svg>;
 export const Dialpad = Keypad;
+
+// Admin dashboard
+export const Grid = (p: P) => <Svg {...p}><rect x="3" y="3" width="8" height="8" rx="1.5" /><rect x="13" y="3" width="8" height="5" rx="1.5" /><rect x="13" y="12" width="8" height="9" rx="1.5" /><rect x="3" y="15" width="8" height="6" rx="1.5" /></Svg>;
+export const Users = (p: P) => <Svg {...p}><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0" /><circle cx="17" cy="9" r="2.5" /><path d="M15.5 14.5a5 5 0 0 1 6 5.5" /></Svg>;
+export const Wallet = (p: P) => <Svg {...p}><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H19a1 1 0 0 1 1 1v2.5" /><rect x="3" y="8.5" width="18" height="11" rx="2" /><circle cx="16.5" cy="14" r="1.3" fill="currentColor" stroke="none" /></Svg>;
+export const UserPlus = (p: P) => <Svg {...p}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M19 8v6M22 11h-6" /></Svg>;
+export const Download = (p: P) => <Svg {...p}><path d="M12 3v12m-5-5 5 5 5-5M4 21h16" /></Svg>;
+export const Refresh = (p: P) => <Svg {...p}><path d="M20.5 12a8.5 8.5 0 1 1-2.5-6" /><path d="M20.5 3v5h-5" /></Svg>;
+export const Trash = (p: P) => <Svg {...p}><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" /></Svg>;

@@ -4,7 +4,7 @@
 **Job:** answer "is the dialer working, and who is working it" — then let the admin open any call.
 **Mockup:** the published artifact (link in chat) shows all four screens with today's real numbers.
 
-Status: **design for review. Nothing built.** Divyanshu adds inputs, then we build.
+Status: **built and deployed 2026-09-10 — see §7.** §§1–6 are the review-stage design; decisions that changed are listed in §7.
 
 ## 1. What the data already supports
 
@@ -132,3 +132,34 @@ without the server log.
    Telnyx rate. Worth a column?
 7. **Export.** CSV only, or a scheduled daily email of the Overview?
 8. **HubSpot write-back** lands later; the Calls drawer's "HubSpot record" link is the hook for it.
+
+## 7. Built 2026-09-10
+
+Status: **built and deployed.** Decisions since the review (owner, 2026-09-10): no connect-rate target —
+the rate and its delta are the whole story; a **Users** screen (add / remove / reactivate / reset
+password, remove = deactivate with history kept and an optional queue hand-over); a **Wallet**
+(Telnyx balance, spend today / 7 d / 30 d, cost per dial all-in and lead-only, per connect, per
+billed minute, spend by day, cost by product); **recordings** of every bridged call — Telnyx
+`record_start` on the lead leg at the bridge, dual-channel mp3, silent, admin-only playback via the
+public token route `/rec/<token>.mp3`; **HubSpot call logging** for every settled dial that has a real
+contact (direction, time, duration, from/to, rep as owner, outcome as a native disposition,
+sub-outcome as a call type, note, and the recording file **uploaded into HubSpot Files**); unknown
+numbers are searched in HubSpot by phone first, and a contact is created only when the admin's
+"create contacts" toggle is on (default off).
+
+| Piece | Where |
+|---|---|
+| Roles, deactivation, admin socket room | `server/src/auth.js`, `server/src/index.js`, `server/src/io.js` (`pokeAdmins`) |
+| Cost capture (`call.cost` webhook → `telnyx_costs`), balance | `server/src/lib/costs.js`; `call_cost_in_webhooks` set on the Telnyx app |
+| Recording start / saved / error, fresh download links | `server/src/lib/recordings.js`; public playback `server/src/routes/rec.js` |
+| HubSpot Call engagements + Files upload + contact search/create | `server/src/lib/hubspotCalls.js` (hooks in `burst.js` and `routes/session.js`) |
+| Every dashboard query (IST days, previous-period deltas) | `server/src/lib/metrics.js` |
+| Admin API incl. users and settings | `server/src/routes/admin.js` (`requireAdmin`) |
+| Screens | `client/components/admin/*` (Overview, Reps, Calls, Leads, Wallet, Users, LeadDrawer); classes prefixed `ad-` in `client/app/admin.css` |
+| Tests | `server/scripts/admin-test.mjs` — 40 assertions over cost, recording, metrics, HubSpot logging, with Telnyx and HubSpot stubbed |
+| Schema | appended to `server/sql/schema.sql`; applied on every deploy by the root `npm start` |
+
+Owner-side, still open at build time: create the admin login (`node scripts/add-user.js marketing@eazybe.com <password> "" admin`);
+add `crm.objects.contacts.write` and `files` to the private app; create the `eazybe_dial_queue` checkbox; create the five call
+types (Interested, Follow-up, Callback, Not interested, Not qualified) under Settings → Calling → Call Setup → Track Call and
+Meeting Types; fix the three reps whose dialer email is not their HubSpot email (himanshu, jeaneth, mayank showed "not matched").

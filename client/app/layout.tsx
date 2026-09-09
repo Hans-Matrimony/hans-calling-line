@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
 import { Hanken_Grotesk, Saira_Semi_Condensed, IBM_Plex_Mono } from 'next/font/google';
 import './globals.css';
+import './admin.css';
 
 // Three voices (call-card v2 polish). Hanken Grotesk: the humanist-grotesque workhorse for all UI and
 // body — calm and razor-legible at 12-15px through an 8-hour shift, and distinctly not Inter/Roboto.

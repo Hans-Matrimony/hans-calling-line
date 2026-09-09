@@ -122,3 +122,64 @@ ALTER TABLE leads ADD COLUMN IF NOT EXISTS hubspot_seen_at TIMESTAMPTZ;
 -- Why a lead stopped. 'hubspot_untick' today; NULL on every pre-existing and non-HubSpot path.
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS stopped_reason TEXT;
 CREATE INDEX IF NOT EXISTS leads_source_idx ON leads (user_id, source, status);
+
+-- ===== Admin dashboard, wallet, recordings, HubSpot call logging (plan 2026-09-10) =====
+
+-- Roles: reps are the default; one admin (marketing@eazybe.com) sees every rep and never dials.
+-- Removing a rep deactivates them (login refused, rep leg hung up) and keeps every lead and call.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS role           TEXT NOT NULL DEFAULT 'rep' CHECK (role IN ('rep', 'admin'));
+ALTER TABLE users ADD COLUMN IF NOT EXISTS active         BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at     TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMPTZ;
+UPDATE users SET role = 'admin' WHERE email = 'marketing@eazybe.com' AND role <> 'admin';
+
+-- When a leg ended, answered or not: ring time for a no-answer is ended_at - started_at.
+-- duration stays talk time and stays NULL on unanswered legs, so nothing that reads it changes.
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS calls_started_idx ON calls (started_at);
+CREATE INDEX IF NOT EXISTS calls_burst_idx   ON calls (burst_id);
+
+-- Telnyx spend (Wallet). One row per call.cost webhook, keyed by the leg so a retry upserts instead of
+-- double-counting. Every leg we place costs money - lead legs, cancelled loser legs, dial failures with
+-- no calls row, and the rep's own session leg (kind='rep') - so this is its own table, not calls columns.
+CREATE TABLE IF NOT EXISTS telnyx_costs (
+  call_control_id TEXT PRIMARY KEY,
+  call_leg_id     TEXT,
+  call_session_id TEXT,
+  kind            TEXT,                          -- 'rep' | 'lead' | NULL (no client_state)
+  user_id         INT REFERENCES users(id),
+  call_id         INT REFERENCES calls(id),      -- from calls.telnyx_call_id when a row exists
+  occurred_at     TIMESTAMPTZ NOT NULL,
+  total_cost      NUMERIC(12,6) NOT NULL DEFAULT 0,
+  currency        TEXT NOT NULL DEFAULT 'USD',
+  billed_secs     INT,
+  status          TEXT,                          -- 'success' | 'error'
+  parts           JSONB NOT NULL DEFAULT '[]'::jsonb,
+  received_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS telnyx_costs_at_idx   ON telnyx_costs (occurred_at);
+CREATE INDEX IF NOT EXISTS telnyx_costs_user_idx ON telnyx_costs (user_id, occurred_at);
+
+-- Call recordings: the winning lead leg is recorded from the bridge (dual channel, mp3, Telnyx-hosted).
+-- The saved webhook's links expire in 10 min and are NOT stored; playback resolves a fresh link through
+-- the Recordings API and caches the recording id. recording_token is the public handle: /rec/<token>.mp3
+-- serves the dashboard player (and HubSpot, until the file copy exists); nulling it revokes the link.
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS recording_status     TEXT;          -- 'started' | 'saved' | 'error'
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS recording_token      TEXT UNIQUE;
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS recording_leg_id     TEXT;
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS recording_session_id TEXT;
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS recording_id         TEXT;
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS recording_started_at TIMESTAMPTZ;
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS recording_ended_at   TIMESTAMPTZ;
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS recording_error      TEXT;
+-- HubSpot Call engagement created for this dial (write-back, calls only), and the copy of the
+-- recording uploaded into HubSpot Files so HubSpot owns it (the Telnyx copy stays for the dashboard).
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS hubspot_call_id      TEXT;
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS hubspot_file_id      TEXT;
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS hubspot_file_url     TEXT;
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS hubspot_error        TEXT;         -- last failure, plain words; NULL once it works
+
+-- Admin toggles. hubspot_create_contacts: make a HubSpot contact for a dialed number that has none
+-- (default off - with it off, calls to unknown numbers are never pushed to HubSpot at all).
+CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+INSERT INTO settings (key, value) VALUES ('hubspot_create_contacts', 'false'::jsonb) ON CONFLICT (key) DO NOTHING;
