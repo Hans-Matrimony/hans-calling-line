@@ -216,7 +216,13 @@ async function doPull(user) {
   const trustAbsence = !!prev && startedAt - prev < RETICK_MAX_GAP_MS;
 
   const { has, labels } = await schema();
-  if (!has.has(QUEUE_PROP)) throw new Error(MSG.noProperty);
+  if (!has.has(QUEUE_PROP)) {
+    // Drop the hour-long schema cache: it was read before the property existed, and without this the
+    // inlet stays broken for up to an hour after someone creates the checkbox. One extra read a minute
+    // while it is missing, none once it is there.
+    cache.schema = null;
+    throw new Error(MSG.noProperty);
+  }
   const { contacts, complete } = await ticked(user, PROPS.filter((n) => has.has(n)));
   const portalId = await portal();
 
