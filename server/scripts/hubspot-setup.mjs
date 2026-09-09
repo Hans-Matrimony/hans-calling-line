@@ -41,9 +41,11 @@ const GROUP = 'eazybe_dialer';
 const PROP = 'eazybe_dial_queue';
 console.log('\nthe dial-queue checkbox');
 
+let propOk = false;
 const existing = await hs('/crm/v3/properties/contacts/' + PROP);
 if (existing.ok) {
   const p = existing.body;
+  propOk = p.fieldType === 'booleancheckbox';
   console.log(`  already exists: "${p.label}" (${p.type}/${p.fieldType}) in group "${p.groupName}"`);
   if (p.fieldType !== 'booleancheckbox') console.log('  WARNING: it is not a single checkbox, so the inlet will not read it as one');
 } else if (existing.status === 403) {
@@ -60,7 +62,7 @@ if (existing.ok) {
     description: 'Tick to send this contact to the Eazybe dialer queue. Untick to remove it. Untick then re-tick to run it again.',
     options: [{ label: 'Yes', value: 'true', displayOrder: 0, hidden: false }, { label: 'No', value: 'false', displayOrder: 1, hidden: false }],
   }) });
-  if (created.ok) console.log(`  created "${created.body.label}" — internal name ${created.body.name}`);
+  if (created.ok) { propOk = true; console.log(`  created "${created.body.label}" — internal name ${created.body.name}`); }
   else if (created.status === 403) console.log('  BLOCKED: creating a property needs crm.schemas.contacts.write on the private app.\n           Either add that scope, or make it by hand: Settings -> Properties -> Contact properties -> Create,\n           single checkbox, internal name exactly ' + PROP);
   else console.log(`  failed: ${created.status} ${String(created.text).slice(0, 200)}`);
 }
@@ -73,14 +75,18 @@ else console.log(`  could not read them (${disp.status}) — the write-back fall
 
 const types = await hs('/crm/v3/properties/calls/hs_activity_type');
 const wanted = ['Interested', 'Follow-up', 'Callback', 'Not interested', 'Not qualified'];
+let typeGap = [];
 console.log('\ncall types for the outcome tiles (HubSpot has no API to create these)');
 if (types.ok) {
   const have = new Set((types.body.options ?? []).map((o) => o.label));
   for (const w of wanted) console.log(`  ${mark(have.has(w))}  ${w}`);
-  const gap = wanted.filter((w) => !have.has(w));
-  if (gap.length) console.log('  create the missing ones: Settings -> Calling -> Call Setup -> Configurations -> Track Call and Meeting Types');
+  typeGap = wanted.filter((w) => !have.has(w));
 } else console.log(`  could not read them (${types.status})`);
 
-console.log('\nstill to do by hand:' + (missing.length ? `\n  - add these scopes to the private app: ${missing.join(', ')}` : '') +
-  '\n  - the five call types above, if any are missing' +
-  '\n  - reps whose dialer email is not their HubSpot email (node scripts/hubspot-owners.mjs)');
+// Only name what is actually outstanding: a checklist that re-lists finished work is noise.
+const todo = [];
+if (missing.length) todo.push('add these scopes to the private app: ' + missing.join(', '));
+if (!propOk) todo.push(`create the ${PROP} single checkbox on contacts`);
+if (typeGap.length) todo.push('create these call types (Settings -> Calling -> Call Setup -> Track Call and Meeting Types): ' + typeGap.join(', '));
+console.log(todo.length ? '\nstill to do:\n  - ' + todo.join('\n  - ') : '\nnothing outstanding — the HubSpot side is fully set up.');
+console.log('rep to HubSpot user mapping: node scripts/hubspot-owners.mjs');
