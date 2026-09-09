@@ -604,10 +604,12 @@ button.hs-lt:hover b { color: var(--blue-ink); }
 
 /* The HubSpot inlet strip on Up next (docs/HUBSPOT-QUEUE.md). One line: is the second inlet on, is it
    working, how fresh. Per-contact rejects stay in the server log by owner's decision — a broken inlet
-   is a different thing and turns this coral, because it must never look like an empty queue. */
-.hs { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; padding: 8px 12px;
-      border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-2); }
-.hs-t { flex: 1; min-width: 0; font-size: 13px; color: var(--ink-2); }
-.hs .btn-mini { flex: none; }
-.hs.bad { border-color: var(--coral-line); background: var(--coral-dim); }
-.hs.bad .hs-t { color: var(--coral-ink); }
+   is a different thing and turns this coral, because it must never look like an empty queue.
+   Named .inlet, NOT .hs: .hs is the handset panel above (line ~304) and a second .hs rule this far
+   down the file wins on source order, which flattened the whole dialer into one row. */
+.inlet { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; padding: 8px 12px;
+         border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-2); }
+.inlet-t { flex: 1; min-width: 0; font-size: 13px; color: var(--ink-2); }
+.inlet .btn-mini { flex: none; }
+.inlet.bad { border-color: var(--coral-line); background: var(--coral-dim); }
+.inlet.bad .inlet-t { color: var(--coral-ink); }

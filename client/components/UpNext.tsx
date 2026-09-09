@@ -10,9 +10,9 @@ import TimeBar from './TimeBar';
 function HubSpotStrip({ hs, onSync, busy }: { hs: HubSpot; onSync: () => void; busy: boolean }) {
   const broken = hs.ok === false;
   return (
-    <div className={'hs' + (broken ? ' bad' : '')}>
+    <div className={'inlet' + (broken ? ' bad' : '')}>
       <span className={'lamp ' + (broken ? 'coral' : 'green')} aria-hidden />
-      <span className="hs-t">
+      <span className="inlet-t">
         {broken ? hs.error : (
           <>
             HubSpot · {hs.syncedAt ? `synced ${since(new Date(hs.syncedAt))}` : 'first sync on the way'}
