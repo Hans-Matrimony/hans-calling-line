@@ -203,14 +203,15 @@ does it in the right order on its own. (Also applied by hand on 2026-09-09.)
 
 ## 11. The checkbox itself (2026-09-10)
 
-Created as  (HubSpot's "Single checkbox") and immediately changed to
-** with exactly one option** — , no default.
+Created as `fieldType: booleancheckbox` (HubSpot's "Single checkbox") and immediately changed to
+**`fieldType: checkbox` with exactly one option** — `Add to dial queue = true`, no default.
 
-Why: a  stores a clean boolean but HubSpot renders it on a contact record as a
-**Yes/No dropdown**, which is two clicks and reads like a question.  with a single option
-is the only shape HubSpot draws as a real tick box. Same stored value (), same search filter
-() — verified against a live contact after the change — so no code
-changed. Unticking empties the property, which is what the untick sweep already expects.
+Why: a `booleancheckbox` stores a clean boolean, but HubSpot renders it on a contact record as a
+**Yes/No dropdown** — two clicks, and it reads like a question rather than an action. `checkbox`
+with a single option is the only shape HubSpot draws as a real tick box. Same stored value
+(`true`), same search filter (`eazybe_dial_queue EQ 'true'`), verified against a live contact after
+the change — so no server code changed. Unticking empties the property, which is exactly what the
+untick sweep in §5.3 already expects.
 
 **HubSpot's search index trails a write by ~20 seconds.** Measured: a tick was invisible to every
 operator (EQ, CONTAINS_TOKEN, HAS_PROPERTY) 5 s after saving and found by all three at ~20 s. So a
