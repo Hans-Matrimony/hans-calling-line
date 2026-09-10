@@ -79,7 +79,7 @@ export function describePull(r: { added: number; resumed: number; reopened: numb
     r.reopened && `${r.reopened} back for another run`,
     r.resumed && `${r.resumed} put back`,
     r.removed && `${r.removed} removed — unticked in HubSpot`,
-    r.skipped && `${r.skipped} skipped — no phone number`,
+    r.skipped && `${r.skipped} skipped — no number, or a duplicate of another contact`,
   ].filter(Boolean).join(' · ');
   return bits || `nothing new — ${r.ticked} contact${r.ticked === 1 ? '' : 's'} ticked`;
 }
