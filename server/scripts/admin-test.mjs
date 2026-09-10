@@ -176,6 +176,24 @@ await q(`UPDATE calls SET disposition = 'cancelled' WHERE id = $1`, [stillRingin
 await logCall(stillRinging);
 ok('a cancelled burst leg is never logged', calls.hsCallPost.length - postsBefore, 1);
 
+// --- 3c. a number Telnyx calls invalid must stop being retried ---------------------------------
+// The two strings below are verbatim from production, where 11 dead numbers ate 16 of 73 dials in a
+// day without ever consuming an attempt.
+const { isInvalidDestination } = await import('../src/telnyx.js');
+const { releaseLead } = await import('../src/lib/queue.js');
+const REAL = '403 {"data":{"call_control_id":"v3:rQK"},"errors":[{"code":10010,"title":null,"detail":"Destination Number is invalid D11. The destination number is invalid."}],"telnyx_error":{"error_code":"D11"}}';
+ok('Telnyx D11 is recognised as a permanently bad number', isInvalidDestination(new Error(REAL)), true);
+ok('so is the bare error code', isInvalidDestination(new Error('403 {"errors":[{"code":10010}]}')), true);
+ok('a timeout is NOT: it must keep its attempt', isInvalidDestination(new Error('request to https://api.telnyx.com timed out')), false);
+ok('nor is a rate limit', isInvalidDestination(new Error('429 {"errors":[{"code":10015,"detail":"Too many requests"}]}')), false);
+ok('nor a destination missing from the outbound voice profile — that is our config, fixable',
+  isInvalidDestination(new Error('403 {"errors":[{"code":10012,"detail":"Destination not whitelisted on the outbound voice profile"}]}')), false);
+// and the lead really does move on: 'invalid' rolls to the next number, or stops a one-number lead
+const LB = await lead('manual-+1995157410', '+1995157410');
+await releaseLead(LB, 'invalid');
+const bad = (await q('SELECT status, attempt_count FROM leads WHERE id = $1', [LB])).rows[0];
+ok('a one-number lead with a dead number stops instead of looping', [bad.status, bad.attempt_count], ['stopped', 1]);
+
 // --- 4. metrics: IST day, segments, wrap median -------------------------------------------------
 const LI = await lead('202', '+919876543210', { segment: 'india', country: 'India' });
 await call(LI, 'cc-7', '2026-09-08T18:00:00Z', { disposition: 'no_answer' }); // 23:30 IST on 8 Sep

@@ -52,6 +52,19 @@ export const stopPlayback = (leg) => telnyx().calls.actions.stopPlayback(leg, { 
 export const bridge = (repLeg, leadLeg) =>
   // park_after_unbridge: without it Telnyx hangs up the rep leg too when the lead hangs up (plan s8: rep leg stays open all session).
   telnyx().calls.actions.bridge(repLeg, { call_control_id_to_bridge_with: leadLeg, prevent_double_bridge: true, park_after_unbridge: 'self' });
+/** Did Telnyx refuse the destination itself, rather than have a hiccup?
+ *
+ *  A malformed number comes back as 403 with `"error_code":"D11"` / code 10010 ("Destination Number
+ *  is invalid"). No retry can ever fix that, so the lead must move on instead of returning every 10
+ *  minutes for ever. Everything else - a timeout, a rate limit, a Telnyx outage - is transient and
+ *  must NOT cost the lead an attempt. Deliberately narrow: a destination that is merely not
+ *  whitelisted on the outbound voice profile is a config gap on our side, not a bad number, and
+ *  must keep retrying so fixing the profile rescues the leads. */
+export function isInvalidDestination(err) {
+  const s = String(err?.message ?? '');
+  return /"error_code"\s*:\s*"D11"/.test(s) || /"code"\s*:\s*10010\b/.test(s) || /destination number is invalid/i.test(s);
+}
+
 /** Record a leg from now until it hangs up. Dual channel: the first leg (the lead) on A, the rep on B. */
 export const startRecording = (leg, opts = {}) =>
   telnyx().calls.actions.startRecording(leg, { channels: 'dual', format: 'mp3', recording_track: 'both', ...opts });

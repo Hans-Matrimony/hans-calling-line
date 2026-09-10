@@ -5,7 +5,7 @@ import { logCall } from './hubspotCalls.js';
 import { activeBurst } from '../state.js';
 import { releaseLead, pickFromNumber } from './queue.js';
 import { resolveLead } from './countries.js';
-import { hangup, beep, bridge, dialLead, startTick, noAnswerTone, stopPlayback } from '../telnyx.js';
+import { hangup, beep, bridge, dialLead, startTick, noAnswerTone, stopPlayback, isInvalidDestination } from '../telnyx.js';
 
 const BEEP_TIMEOUT_MS = 900; // bridge anyway if Telnyx never reports the beep finished; short, to shrink the dead-air window in which a lead can hang up before we bridge
 
@@ -227,10 +227,16 @@ export async function startBurst(userId, leads, fromOverride = null, extra = {})
       await q('INSERT INTO calls (lead_id, burst_id, telnyx_call_id, from_number, to_number) VALUES ($1, $2, $3, $4, $5)', [lead.id, burst.id, ccid, from, lead.phone]);
       legs.push({ leadId: lead.id, name: lead.name, phone: lead.phone, country: lead.country, from, card: previewCard(lead) });
     } catch (e) {
-      console.error('dial failed', lead.phone, e.message);
+      // Two very different failures wear the same catch. A number Telnyx calls invalid can never be
+      // dialled, so the lead rolls to its next number or stops ('invalid'); requeueing it burned
+      // 16 of 73 dials in one day on 11 dead numbers, none of which ever consumed an attempt.
+      // A transient error still costs nothing and comes back in 10 minutes ('cancelled').
+      const dead = isInvalidDestination(e);
+      console.error('dial failed', lead.phone, dead ? 'invalid number, not retrying' : e.message);
       await q(`INSERT INTO calls (lead_id, burst_id, from_number, to_number, disposition) VALUES ($1, $2, $3, $4, 'failed')`, [lead.id, burst.id, from, lead.phone]);
-      await releaseLead(lead.id, 'cancelled'); // the phone never rang: back in 10 min, no attempt consumed
-      emitToUser(userId, 'lead:failed', { leadId: lead.id, name: lead.name, phone: lead.phone, error: e.message });
+      await releaseLead(lead.id, dead ? 'invalid' : 'cancelled');
+      emitToUser(userId, 'lead:failed', { leadId: lead.id, name: lead.name, phone: lead.phone,
+        error: dead ? 'That is not a valid phone number — the lead moves on.' : e.message });
     }
   }
   if (!legs.length) { activeBurst.delete(userId); throw new Error('no legs could be placed'); }
