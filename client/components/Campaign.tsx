@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import type { useDialer, ActivityEvent, Card, Leg, NextLead, Mode } from '../lib/useDialer';
-import { emptyQueue, NOT_DUE, OUTCOME_LABEL, clock, localTime, prettyPhone, relative, splitName } from '../lib/format';
+import { emptyQueue, NOT_DUE, OUTCOME_LABEL, clock, listCountries, localTime, prettyPhone, relative, splitName } from '../lib/format';
 import { resolveLead } from '../lib/leadFields';
 import CallCard, { LeadPreview } from './CallCard';
 import Handset from './Handset';
@@ -166,8 +166,13 @@ export default function Campaign({ d, mode }: { d: D; mode: Mode }) {
 
   // One truthful reason when Start is grey.
   const nextOpen = d.stats?.next_open_at ? new Date(d.stats.next_open_at) : null;
+  // "12 open at 10:00 (India), 6 at 13:30 (Germany, France)" when the grouped queue is in; the coarse
+  // gap/clock counts until it is.
+  const windows = d.queue?.later.filter((g) => g.why === 'window' && g.opensAt).slice(0, 3)
+    .map((g, i) => `${g.count}${i ? '' : ' open'} at ${clock(new Date(g.opensAt!))}${g.countries.length ? ` (${listCountries(g.countries, 2)})` : ''}`).join(', ');
   const waiting = d.stats && ready === 0 && queued
-    ? `Nobody is due right now.${nextOpen ? ` Next opens ${clock(nextOpen)} (${relative(nextOpen)})` : ''}${d.stats.waiting_gap || d.stats.waiting_window ? ` — ${d.stats.waiting_gap} waiting on the 2h gap, ${d.stats.waiting_window} on their clocks.` : '.'}`
+    ? windows ? `Nobody is due right now — ${windows}.`
+      : `Nobody is due right now.${nextOpen ? ` Next opens ${clock(nextOpen)} (${relative(nextOpen)})` : ''}${d.stats.waiting_gap || d.stats.waiting_window ? ` — ${d.stats.waiting_gap} waiting on the 2h gap, ${d.stats.waiting_window} on their clocks.` : '.'}`
     : null;
   const why = off ? (d.softphone.error ?? 'Connect audio first.') : capped ? CAP_MSG : ready === 0 ? (queued ? (waiting ?? NOT_DUE) : EMPTY_QUEUE) : '';
   const err = d.err && d.err !== d.softphone.error ? d.err : off ? null : d.softphone.error; // when audio is off `why` already carries the softphone error

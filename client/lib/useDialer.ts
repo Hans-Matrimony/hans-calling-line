@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import { API, api, post, patch } from './api';
-import { SUB_OUTCOME_LABEL } from './format';
+import { SUB_OUTCOME_LABEL, describePull } from './format';
 import { useSoftphone } from './useSoftphone';
 
 export type Me = { id: number; email: string; phone: string | null; role?: 'rep' | 'admin' };
@@ -17,12 +17,19 @@ export type Stats = { dialed_today: number; connected_today: number; talk_second
 /** The HubSpot inlet's health, for the Up next strip. `configured` false = no token on the server, so the
  *  strip stays hidden and CSV is the only inlet. `ok` false means the inlet itself is broken (bad token,
  *  missing scope, the checkbox property was never created) — always shown, unlike per-contact rejects. */
-export type HubSpot = { configured: boolean; ok?: boolean | null; error?: string | null; syncedAt?: string | null; inQueue?: number };
-export type SyncResult = { added: number; resumed: number; reopened: number; removed: number; skipped: number; ticked: number; syncedAt: string };
+export type HubSpot = { configured: boolean; ok?: boolean | null; error?: string | null; syncedAt?: string | null; inQueue?: number; lastChange?: SyncResult | null };
+/** What one pull did. `at` is set on the copy the server keeps as the rep's last change (and on the queue:synced event). */
+export type SyncResult = { added: number; resumed: number; reopened: number; removed: number; skipped: number; ticked: number; syncedAt: string; at?: string };
 export type LastCall = { phone: string; name: string | null; from: string | null; at: Date; outcome: string | null };
 export type LegStatus = 'ringing' | 'answered' | 'cancelled' | 'abandoned';
 export type Leg = { leadId: number; name: string | null; phone: string; country: string | null; from: string; status: LegStatus; card?: Card };
-export type NextLead = { id: number; name: string | null; phone: string; phones: string[]; country: string | null; segment: string; utc_offset: string | null; attempt_count: number; status: string; last_outcome: string | null; lastCallAt: string | null; everConnected: boolean | null; extra: LeadExtra; phoneIdx: number; phoneCount: number };
+export type NextLead = { id: number; name: string | null; phone: string; phones: string[]; country: string | null; segment: string; utc_offset: string | null; attempt_count: number; status: string; next_call_at: string; last_outcome: string | null; lastCallAt: string | null; everConnected: boolean | null; extra: LeadExtra; phoneIdx: number; phoneCount: number };
+/** The one rule holding a lead back (server queue.js WHY), or null when it is due now. */
+export type QueueWhy = 'gap' | 'hour' | 'window' | 'later' | 'no_timezone' | null;
+export type QueueLead = NextLead & { opensAt: string; why: QueueWhy };
+/** One head on Up next: 'ready', 'window:<instant>' (one per opening time), or the why word. */
+export type QueueGroup = { key: string; why: QueueWhy; opensAt: string | null; count: number; countries: string[]; leads: QueueLead[] };
+export type QueueOverview = { now: string; total: number; ready: QueueGroup; later: QueueGroup[]; soonest: string | null };
 export type LeadPatch = { name?: string; company?: string; title?: string; email?: string; linkedin?: string; leadStage?: string; phones?: string[] };
 export type FromNumber = { number: string; region: 'india' | 'eu' | 'us'; usedToday: number; cap: number; available: boolean };
 export type Rep = 'disconnected' | 'ringing' | 'connected';
@@ -94,6 +101,8 @@ export function useDialer(me: Me) {
   const [stats, setStats] = useState<Stats | null>(null);
   const [fromNumbers, setFromNumbers] = useState<FromNumber[]>([]);
   const [upNext, setUpNext] = useState<NextLead[] | null>(null); // null = loading
+  const [queue, setQueue] = useState<QueueOverview | null>(null); // the whole queue, grouped by when each lead opens (Up next tab)
+  const expandedRef = useRef<Set<string>>(new Set());              // groups the rep opened in full; re-sent on every refresh so "Show all" survives the minute poll
   const [feed, setFeed] = useState<ActivityEvent[]>([]);
   const [feedLoaded, setFeedLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -124,11 +133,16 @@ export function useDialer(me: Me) {
     if (runRef.current && !manualRef.current) setRunTape((t) => [...t, e]);
   }, []);
 
+  const refreshQueue = useCallback(() => {
+    const groups = [...expandedRef.current].map((k) => '&group=' + encodeURIComponent(k)).join('');
+    api<QueueOverview>('/api/leads/queue?per=5' + groups).then(setQueue).catch(() => {});
+  }, []);
   const refresh = useCallback(() => {
     api<Stats>('/api/leads/stats').then(setStats).catch(() => {});
     api<FromNumber[]>('/api/session/from-numbers').then(setFromNumbers).catch(() => {});
     api<NextLead[]>('/api/leads/next?n=10').then(setUpNext).catch(() => {});
-  }, []);
+    refreshQueue();
+  }, [refreshQueue]);
 
   /** Rebuild the call from the server's view of it. */
   const sync = useCallback(() => api<SessionState>('/api/session/state').then((s) => {
@@ -180,6 +194,8 @@ export function useDialer(me: Me) {
       tapePush('failed', label(p.name, p.phone), 'Could not be dialed — back in the queue in 10 min', p.phone);
     });
     socket.on('call:bridged', () => sys('On the line'));
+    // A HubSpot pull changed this rep's queue (a tick, an untick): say what arrived and show it, no reload.
+    socket.on('queue:synced', (c: SyncResult) => { sys('HubSpot: ' + describePull(c)); refresh(); });
     socket.on('call:ended', (p: { callId: number; duration: number | null; cause?: string }) => {
       // The red button and the hangup webhook both report this call: one row, one refresh.
       const id = 'end' + p.callId;
@@ -229,8 +245,10 @@ export function useDialer(me: Me) {
   }, [push]);
 
   return {
-    me, rep, phase, legs, card, answeredAt, duration, endCause, stats, fromNumbers, upNext, feed, feedLoaded, busy, err, softphone,
+    me, rep, phase, legs, card, answeredAt, duration, endCause, stats, fromNumbers, upNext, queue, feed, feedLoaded, busy, err, softphone,
     note, setNote, lastCall, prefill, setPrefill, run, lastRun, runTape, lastBurst, heldBack,
+    /** "Show all N" on an Up next group: fetch it in full, and keep it open across refreshes. */
+    expandGroup: (key: string) => { expandedRef.current.add(key); refreshQueue(); },
     startRun: (mode: Mode) => { if (!runRef.current) { setRunTape([]); setLastBurst(null); setRun({ mode, since: new Date(), endAfter: false }); } },
     stopRun: () => setRun((r) => { if (r) setLastRun({ mode: r.mode, since: r.since, until: new Date() }); return null; }),
     endRunAfterCall: () => setRun((r) => (r ? { ...r, endAfter: true } : r)),
@@ -270,9 +288,11 @@ export function useDialer(me: Me) {
       for (const k of ['company', 'title', 'email', 'linkedin', 'leadStage'] as const) if (k in p) ex[k] = p[k];
       const nm = (c: string | null) => ('name' in p ? (p.name?.trim() || null) : c);
       setCard((c) => (c && c.leadId === leadId ? { ...c, name: nm(c.name), phones: p.phones ?? c.phones, extra: { ...c.extra, ...ex } } : c));
-      setUpNext((list) => list && list.map((l) => (l.id === leadId
+      const fix = <L extends NextLead>(l: L): L => (l.id === leadId
         ? { ...l, name: nm(l.name), phones: p.phones ?? l.phones, phoneCount: p.phones ? p.phones.length : l.phoneCount, extra: { ...l.extra, ...ex } }
-        : l)));
+        : l);
+      setUpNext((list) => list && list.map(fix));
+      setQueue((qo) => qo && { ...qo, ready: { ...qo.ready, leads: qo.ready.leads.map(fix) }, later: qo.later.map((g) => ({ ...g, leads: g.leads.map(fix) })) });
       try {
         const r = await patch<{ name: string | null; extra: LeadExtra; phones: string[]; phoneIdx: number }>(`/api/leads/${leadId}`, p);
         setCard((c) => (c && c.leadId === leadId ? { ...c, name: r.name, extra: r.extra, phones: r.phones, phoneIdx: r.phoneIdx, phone: r.phones[r.phoneIdx - 1] ?? c.phone } : c));
@@ -300,14 +320,8 @@ export function useDialer(me: Me) {
     // the fallback for a rep who ticked something in HubSpot and does not want to wait even that long.
     syncNow: () => runCmd('sync with HubSpot', async () => {
       const r = await post<SyncResult>('/api/leads/sync');
-      const bits = [
-        r.added && `${r.added} added`,
-        r.reopened && `${r.reopened} back for another run`,
-        r.resumed && `${r.resumed} put back`,
-        r.removed && `${r.removed} removed — unticked in HubSpot`,
-        r.skipped && `${r.skipped} skipped — no phone number`,
-      ].filter(Boolean).join(' · ');
-      sys(bits ? `HubSpot: ${bits}` : `HubSpot: nothing new — ${r.ticked} contact${r.ticked === 1 ? '' : 's'} ticked`);
+      // A pull that changed something already reached the feed through queue:synced; only "nothing new" is ours to say.
+      if (r.added + r.resumed + r.reopened + r.removed === 0) sys('HubSpot: ' + describePull(r));
       refresh();
       return r;
     }),

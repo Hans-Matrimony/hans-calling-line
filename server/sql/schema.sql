@@ -103,6 +103,9 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS hubspot_user_id   BIGINT;
 -- at the previous poll?" is measured against (re-tick detection, below), and a gap larger than
 -- RETICK_MAX_GAP_MS marks the answer untrustworthy so a server restart cannot resurrect finished leads.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS hubspot_synced_at TIMESTAMPTZ;
+-- The last pull that changed this rep's queue ({at, added, resumed, reopened, removed, skipped, ticked}),
+-- so Up next can say "25 pulled 19 min ago" after a redeploy too - exactly when a rep asks "did they arrive?".
+ALTER TABLE users ADD COLUMN IF NOT EXISTS hubspot_last_change JSONB;
 
 -- Which inlet a lead came through. Existing rows are CSV apart from the keypad's manual-<phone> ones.
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'csv';

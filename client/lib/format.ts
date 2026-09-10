@@ -72,6 +72,21 @@ export const emptyQueue = (hubspot?: boolean) => hubspot
   : 'Your queue is empty — press Upload CSV to add leads.';
 export const NOT_DUE = 'Nobody is due right now — leads come back 2h after a no-answer, inside 10:00–19:00 their time, up to 6 tries.';
 
+/** One sentence for what a HubSpot pull did — the feed line, the toast and the Up next strip all say the same thing. */
+export function describePull(r: { added: number; resumed: number; reopened: number; removed: number; skipped: number; ticked: number }) {
+  const bits = [
+    r.added && `${r.added} pulled`,
+    r.reopened && `${r.reopened} back for another run`,
+    r.resumed && `${r.resumed} put back`,
+    r.removed && `${r.removed} removed — unticked in HubSpot`,
+    r.skipped && `${r.skipped} skipped — no phone number`,
+  ].filter(Boolean).join(' · ');
+  return bits || `nothing new — ${r.ticked} contact${r.ticked === 1 ? '' : 's'} ticked`;
+}
+
+/** "India, Germany, France +2 more" for a group head. */
+export const listCountries = (c: string[], max = 3) => c.slice(0, max).join(', ') + (c.length > max ? ` +${c.length - max} more` : '');
+
 /** Date -> the value a datetime-local input wants, on the rep's clock. */
 export function toLocalInput(d: Date) {
   const p = (n: number) => String(n).padStart(2, '0');

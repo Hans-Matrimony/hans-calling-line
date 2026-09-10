@@ -94,6 +94,10 @@ Concurrent calls for the same rep coalesce (one in flight at a time).
    | yes | `stopped` by an earlier untick | resume → `queued`, attempts kept |
    | yes | `connected` / `exhausted` / `stopped` by outcome, `hubspot_seen_at` ≥ last poll | stale tick; nothing |
    | yes | same, `hubspot_seen_at` < last poll | **re-tick** → `queued`, `attempt_count=0`, `number_attempts=0`, `phone_idx=1`, `next_call_at=now()` |
+   | yes | same, `hubspot_seen_at IS NULL` (a CSV lead that carried the Record ID, never ticked before) | **first tick** → same as re-tick. The tick is the request; there is no earlier poll for it to be absent from (fixed 2026-09-11 — one of 25 ticked contacts stayed `connected`) |
+
+   Every stamped lead also gets `source='hubspot'`, so a CSV lead adopted by Record ID is removed by an
+   untick like any other.
    | no | `queued` / `later` | untick → `stopped`, `stopped_reason='hubspot_untick'` |
    | no | `in_flight` | leave it; the next poll after the call handles it |
    | no | finished | nothing |
@@ -217,3 +221,34 @@ untick sweep in §5.3 already expects.
 operator (EQ, CONTAINS_TOKEN, HAS_PROPERTY) 5 s after saving and found by all three at ~20 s. So a
 rep who ticks and immediately presses Start can miss one poll; the next one picks it up. Worth
 remembering before concluding the inlet is broken — read the record directly to tell the two apart.
+
+## 12. What Up next shows (2026-09-11)
+
+A rep ticked 25 contacts at 00:09 IST, opened Up next at 00:29 and saw three rows. All 25 had
+arrived; 22 were held by their local clocks (India at 00:xx, Europe at 20:xx) and the panel listed
+only what Auto/Burst would dial *now*. The inlet worked and the screen lied by omission.
+
+Up next now shows the **whole queue, grouped by when each lead opens**, from `GET /api/leads/queue`
+(`queueOverview()` in `lib/queue.js`; pulls from HubSpot first, like `/next`):
+
+| Group key | Head | Who |
+|---|---|---|
+| `ready` | **Due now** | inside calling hours, past the 2h gap, not yet tried at this hour — what Start would pick |
+| `window:<instant>` | **Opens 10:00 · in 8h 51m · India** | held by the 10:00–19:00 rule; one group per opening instant, so India (10:00 IST) and Germany (13:30 IST) are two heads |
+| `gap` | Back after the 2h gap | rows say when |
+| `hour` | Opens next hour | already rung at this hour of their day |
+| `later` | Callbacks you booked | rows say "Tue 10:00 their time" |
+| `no_timezone` | No country, so no calling hours | fill Country in HubSpot and it schedules itself |
+
+Every group carries 5 rows; "Show all N" (`?group=<key>`, repeatable) opens one in full and stays
+open across the minute poll. Rows are the same tap-to-dial button everywhere: a hand-dialled call
+ignores calling hours, so nothing on the page is out of reach. `opensAt` / `why` come from one SQL
+expression (`OPENS_AT`, `WHY`) shared with `readiness()` and `eligibleWhere()`, so the Campaign page,
+the stats and Up next cannot disagree. Owner's decision: the gate itself stays — no per-run
+"ignore calling hours" switch; the keypad is the override.
+
+**"Did my 25 arrive?"** — `users.hubspot_last_change` keeps the last pull that changed the queue
+(`{at, added, resumed, reopened, removed, skipped, ticked}`); the strip reads "HubSpot · 25 pulled
+19 min ago · checked 40s ago". The same pull emits `queue:synced` to the rep's tabs, which print
+"HubSpot: 25 pulled" in the feed and refetch — no reload, no waiting for the minute poll.
+(The event was documented in §5.6 from the start but never actually emitted until now.)

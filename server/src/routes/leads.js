@@ -2,7 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import { requireAuth } from '../auth.js';
 import { importCsv } from '../lib/import.js';
-import { peekLeads, readiness } from '../lib/queue.js';
+import { peekLeads, readiness, queueOverview } from '../lib/queue.js';
 import { normalizePhone } from '../lib/import.js';
 import { q } from '../db/pool.js';
 import { pullQueue, pullBeforeRead, status as hubspotStatus, configured as hubspotConfigured } from '../lib/hubspot.js';
@@ -37,10 +37,20 @@ export async function hubspotPanel(userId) {
   if (!st.configured) return { configured: false };
   const { rows: [r] } = await q(
     `SELECT (SELECT hubspot_synced_at FROM users WHERE id = $1) AS "syncedAt",
+            (SELECT hubspot_last_change FROM users WHERE id = $1) AS "lastChange",
             count(*) FILTER (WHERE source = 'hubspot' AND status IN ('queued', 'later'))::int AS "inQueue"
      FROM leads WHERE user_id = $1`, [userId]);
-  return { configured: true, ok: st.ok, error: st.error, syncedAt: r.syncedAt, inQueue: r.inQueue };
+  return { configured: true, ok: st.ok, error: st.error, syncedAt: r.syncedAt, lastChange: r.lastChange, inQueue: r.inQueue };
 }
+
+// The whole queue for the Up next tab, grouped by when each lead opens (queueOverview). Pulls from
+// HubSpot first like /next. ?per= rows per group; ?group=<key> (repeatable) expands a group in full.
+router.get('/queue', requireAuth, async (req, res) => {
+  const per = Math.min(50, Math.max(1, Number(req.query.per) || 5));
+  const expand = [].concat(req.query.group ?? []).map(String).slice(0, 20);
+  await pullBeforeRead(req.userId);
+  res.json(await queueOverview(req.userId, { per, expand }));
+});
 
 // "Up next": what the rep's next dial would pick, in order. utc_offset lets the client show the lead's local clock.
 // Pulls from HubSpot first (bounded), so a contact ticked a moment ago is already on the list.

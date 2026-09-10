@@ -102,7 +102,7 @@ export default function Console({ me, onLogout }: { me: Me; onLogout: () => void
         {tab === 'auto' && <div className="page wide"><Campaign d={d} mode="auto" /></div>}
         {tab === 'burst' && <div className="page wide"><Campaign d={d} mode="burst" /></div>}
         {tab === 'activity' && <div className="page"><Activity feed={d.feed} loaded={d.feedLoaded} onDial={dialFrom} /></div>}
-        {tab === 'upnext' && <div className="page"><UpNext leads={d.upNext} queued={s?.queued} nextOpen={s?.next_open_at ?? null} onDial={dialFrom} hubspot={s?.hubspot} onSync={d.syncNow} busy={d.busy} /></div>}
+        {tab === 'upnext' && <div className="page"><UpNext queue={d.queue} onDial={dialFrom} onExpand={d.expandGroup} hubspot={s?.hubspot} onSync={d.syncNow} busy={d.busy} /></div>}
 
         {(tab === 'activity' || tab === 'upnext') && (
           <footer className="bottombar">

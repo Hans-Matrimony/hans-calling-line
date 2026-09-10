@@ -5,6 +5,7 @@
 import { q } from '../db/pool.js';
 import { resolveLead, segmentFor } from './countries.js';
 import { normalizePhone, upsertLead, looksLikePhone } from './import.js';
+import { emitToUser } from '../io.js';
 
 const BASE = 'https://api.hubapi.com';
 export const QUEUE_PROP = 'eazybe_dial_queue';
@@ -256,13 +257,17 @@ async function doPull(user) {
     if (ex.noTimezone) { fresh.push(lead); continue; }
     stamp.push(lead.id);
     if (ex.status === 'stopped' && String(ex.reason ?? '').startsWith('hubspot_untick')) resume.push(ex);
-    else if (FINISHED.has(ex.status) && trustAbsence && ex.seen && new Date(ex.seen) < prev) reopen.push(ex.id);
+    // A finished lead comes back when the tick is new: either it was absent from the previous pull
+    // (untick + re-tick), or it has never been seen ticked at all - a CSV lead that carried a Record
+    // ID and was connected weeks ago. The rep ticked it because they want to call it again.
+    else if (FINISHED.has(ex.status) && (ex.seen == null || (trustAbsence && new Date(ex.seen) < prev))) reopen.push(ex.id);
   }
 
   // Steady state is these two statements and nothing more: a rep whose queue has not changed costs
   // one search and one UPDATE. Fields of a lead already queued are deliberately not refreshed
-  // (docs/HUBSPOT-QUEUE.md s4) - untick and re-tick is how a rep asks for a re-read.
-  if (stamp.length) await q(`UPDATE leads SET hubspot_seen_at = $2 WHERE hubspot_contact_id = ANY($1)`, [stamp, startedAt]);
+  // (docs/HUBSPOT-QUEUE.md s4) - untick and re-tick is how a rep asks for a re-read. A ticked lead
+  // is HubSpot-governed from here on whichever inlet brought it, so the untick sweep can remove it.
+  if (stamp.length) await q(`UPDATE leads SET hubspot_seen_at = $2, source = 'hubspot' WHERE hubspot_contact_id = ANY($1)`, [stamp, startedAt]);
 
   for (const lead of fresh) {
     const row = await upsertLead({ ...lead, userId: user.id, seenAt: startedAt });
@@ -298,7 +303,15 @@ async function doPull(user) {
 
   if (complete) await q('UPDATE users SET hubspot_synced_at = $2 WHERE id = $1', [user.id, startedAt]);
   markOk();
-  return { ...r, syncedAt: startedAt, ticked: leads.length };
+  const result = { ...r, syncedAt: startedAt, ticked: leads.length };
+  // Something moved: remember it (survives a redeploy) and tell the rep's open tabs right now, so a tick
+  // in HubSpot shows up on Up next without waiting for the minute poll.
+  if (r.added + r.resumed + r.reopened + r.removed > 0) {
+    const change = { at: startedAt, ...result };
+    await q('UPDATE users SET hubspot_last_change = $2 WHERE id = $1', [user.id, JSON.stringify(change)]);
+    emitToUser(user.id, 'queue:synced', change);
+  }
+  return result;
 }
 
 // One pull per rep at a time: the 60s loop, Start dialing and the Sync now button all call this, and

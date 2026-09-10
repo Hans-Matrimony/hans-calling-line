@@ -88,6 +88,8 @@ CONTACTS = [
   contact('104', { firstname: 'Naveen', phone: '918712499252', country: 'India' }), // no +, 12 digits
 ];
 ok('first pull adds them', counts(await hubspot.pullQueue(uid)), { added: 3, resumed: 0, reopened: 0, removed: 0, skipped: 1 });
+const { rows: [{ change }] } = await q('SELECT hubspot_last_change AS change FROM users WHERE id = $1', [uid]);
+ok('the pull that changed the queue is remembered on the rep', [change.added, change.ticked, typeof change.at], [3, 3, 'string']);
 
 const c101 = await lead('101');
 ok('name, country, timezone, segment', [c101.name, c101.country, Number(c101.utc_offset), c101.segment, c101.status, c101.source],
@@ -139,6 +141,21 @@ CONTACTS[1].properties.eazybe_dial_queue = 'true';
 ok('re-tick re-opens it', counts(await hubspot.pullQueue(uid)), { added: 0, resumed: 0, reopened: 1, removed: 0, skipped: 1 });
 const rerun = await lead('102');
 ok('fresh run: queued, attempts back to zero', [rerun.status, rerun.attempt_count], ['queued', 0]);
+
+// --- 7b. a first-ever tick on a lead the dialer already finished is a fresh request ------------
+// A CSV row that carried the Record ID, connected weeks ago, then ticked in HubSpot: there is no
+// previous poll for it to be absent from, so "absent then present" can never fire. The tick itself
+// is the signal. Seen live 2026-09-11: 1 of 25 ticked contacts silently stayed 'connected'.
+await q(`INSERT INTO leads (hubspot_contact_id, name, phone, phones, country, utc_offset, segment, user_id, source, status, attempt_count)
+         VALUES ('109', 'Old Connect', '+27615055293', ARRAY['+27615055293'], 'South Africa', 2, 'non_india', $1, 'csv', 'connected', 3)`, [uid]);
+CONTACTS.push(contact('109', { firstname: 'Old', lastname: 'Connect', phone: '+27615055293', country: 'South Africa' }));
+ok('first-ever tick on a finished CSV lead re-queues it', counts(await hubspot.pullQueue(uid)), { added: 0, resumed: 0, reopened: 1, removed: 0, skipped: 1 });
+const old = await lead('109');
+ok('fresh attempt budget, now HubSpot-governed', [old.status, old.attempt_count, old.source], ['queued', 0, 'hubspot']);
+ok('and only once', counts(await hubspot.pullQueue(uid)).reopened, 0);
+CONTACTS.at(-1).properties.eazybe_dial_queue = 'false';
+ok('untick then removes it like any other ticked lead', counts(await hubspot.pullQueue(uid)).removed, 1);
+CONTACTS.pop();
 
 // --- 8. a restart must not resurrect every lead we ever finished -------------------------------
 await releaseLead(id102, 'connected');
