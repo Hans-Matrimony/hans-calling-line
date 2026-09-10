@@ -45,9 +45,10 @@ let propOk = false;
 const existing = await hs('/crm/v3/properties/contacts/' + PROP);
 if (existing.ok) {
   const p = existing.body;
-  propOk = p.fieldType === 'booleancheckbox';
+  propOk = p.fieldType === 'checkbox' || p.fieldType === 'booleancheckbox';
   console.log(`  already exists: "${p.label}" (${p.type}/${p.fieldType}) in group "${p.groupName}"`);
-  if (p.fieldType !== 'booleancheckbox') console.log('  WARNING: it is not a single checkbox, so the inlet will not read it as one');
+  if (!propOk) console.log('  WARNING: it is neither a tick box nor a single checkbox, so the inlet will not read it as one');
+  else if (p.fieldType === 'booleancheckbox') console.log("  note: this renders as a Yes/No dropdown on a record; fieldType 'checkbox' with one option renders as a real tick box");
 } else if (existing.status === 403) {
   console.log('  cannot even look: the token is missing crm.schemas.contacts.read');
 } else {
@@ -58,12 +59,14 @@ if (existing.ok) {
 
   const created = await hs('/crm/v3/properties/contacts', { method: 'POST', body: JSON.stringify({
     name: PROP, label: 'Eazybe · Dial queue', groupName: g.ok || g.status === 409 ? GROUP : 'contactinformation',
-    type: 'enumeration', fieldType: 'booleancheckbox', formField: false, hasUniqueValue: false, hidden: false,
+    // 'checkbox' with a single option is the only shape HubSpot draws as a real tick box on a record;
+    // 'booleancheckbox' is the same data but renders as a Yes/No dropdown, which reps disliked.
+    type: 'enumeration', fieldType: 'checkbox', formField: false, hasUniqueValue: false, hidden: false,
     description: 'Tick to send this contact to the Eazybe dialer queue. Untick to remove it. Untick then re-tick to run it again.',
-    options: [{ label: 'Yes', value: 'true', displayOrder: 0, hidden: false }, { label: 'No', value: 'false', displayOrder: 1, hidden: false }],
+    options: [{ label: 'Add to dial queue', value: 'true', displayOrder: 0, hidden: false }],
   }) });
   if (created.ok) { propOk = true; console.log(`  created "${created.body.label}" — internal name ${created.body.name}`); }
-  else if (created.status === 403) console.log('  BLOCKED: creating a property needs crm.schemas.contacts.write on the private app.\n           Either add that scope, or make it by hand: Settings -> Properties -> Contact properties -> Create,\n           single checkbox, internal name exactly ' + PROP);
+  else if (created.status === 403) console.log('  BLOCKED: creating a property needs crm.schemas.contacts.write on the private app.\n           Either add that scope, or make it by hand: Settings -> Properties -> Contact properties -> Create,\n           "Multiple checkboxes" with one option "Add to dial queue" = true, internal name exactly ' + PROP);
   else console.log(`  failed: ${created.status} ${String(created.text).slice(0, 200)}`);
 }
 

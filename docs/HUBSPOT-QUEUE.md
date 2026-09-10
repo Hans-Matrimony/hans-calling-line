@@ -200,3 +200,19 @@ does it in the right order on its own. (Also applied by hand on 2026-09-09.)
   `/sync`, and both strip states render (screenshotted).
 - **Not yet proven:** one real ticked contact travelling into a queue. That needs `HUBSPOT_TOKEN` and
   the `eazybe_dial_queue` property, both §7. Tick one contact, press Sync now, expect "1 added".
+
+## 11. The checkbox itself (2026-09-10)
+
+Created as  (HubSpot's "Single checkbox") and immediately changed to
+** with exactly one option** — , no default.
+
+Why: a  stores a clean boolean but HubSpot renders it on a contact record as a
+**Yes/No dropdown**, which is two clicks and reads like a question.  with a single option
+is the only shape HubSpot draws as a real tick box. Same stored value (), same search filter
+() — verified against a live contact after the change — so no code
+changed. Unticking empties the property, which is what the untick sweep already expects.
+
+**HubSpot's search index trails a write by ~20 seconds.** Measured: a tick was invisible to every
+operator (EQ, CONTAINS_TOKEN, HAS_PROPERTY) 5 s after saving and found by all three at ~20 s. So a
+rep who ticks and immediately presses Start can miss one poll; the next one picks it up. Worth
+remembering before concluding the inlet is broken — read the record directly to tell the two apart.
