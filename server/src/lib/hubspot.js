@@ -229,10 +229,16 @@ async function doPull(user) {
 
   const r = { ...EMPTY };
   const leads = [];
+  const byPhone = new Map();   // E.164 -> contact id already carrying it in this rep's ticked set
   for (const c of contacts) {
     const lead = toLead(c, { labels, portalId });
-    if (lead) leads.push(lead);
-    else { r.skipped++; console.warn(`[hubspot] rep ${user.id}: contact ${c.id} is ticked but has no number to call`); }
+    if (!lead) { r.skipped++; console.warn(`[hubspot] rep ${user.id}: contact ${c.id} is ticked but has no number to call`); continue; }
+    // Two HubSpot contacts on one number (seen live: 2 of 25) would become two leads and be dialled twice.
+    // The first one wins; the duplicate is skipped and logged, never merged - that is HubSpot's job.
+    const dup = lead.phones.find((p) => byPhone.has(p));
+    if (dup) { r.skipped++; console.warn(`[hubspot] rep ${user.id}: contact ${c.id} duplicates ${dup} (contact ${byPhone.get(dup)}) — skipped`); continue; }
+    for (const p of lead.phones) byPhone.set(p, lead.id);
+    leads.push(lead);
   }
 
   const ids = leads.map((l) => l.id);

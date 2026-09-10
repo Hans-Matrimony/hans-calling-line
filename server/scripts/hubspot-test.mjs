@@ -206,6 +206,15 @@ const fixed = await lead('108');
 ok('country filled in HubSpot: the lead becomes dialable on the next poll',
   [Number(fixed.utc_offset), fixed.country, fixed.status], [2, 'Germany', 'queued']);
 
+// --- 12b. two contacts on one number are one lead, not two dials --------------------------------
+CONTACTS.push(contact('110', { firstname: 'Twice', phone: '+447931574398', country: 'United Kingdom' }));
+CONTACTS.push(contact('111', { firstname: 'Twice Again', mobilephone: '+447931574398', country: 'United Kingdom' }));
+const twice = counts(await hubspot.pullQueue(uid));
+ok('the duplicate is skipped, the first one is added', [twice.added, twice.skipped], [1, 2]);   // + the no-number contact 103
+ok('and never inserted', await lead('111'), undefined);
+CONTACTS.splice(-2, 2);
+await hubspot.pullQueue(uid);
+
 // --- 13. a broken inlet says so in plain words -------------------------------------------------
 PROPS = PROPS.filter((p) => p !== 'eazybe_dial_queue');
 const fresh = await import('../src/lib/hubspot.js?missing-property');   // fresh module: empty schema cache
