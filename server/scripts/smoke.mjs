@@ -12,7 +12,7 @@ const login = await fetch(B + '/api/login', { method: 'POST', headers: j, body: 
 console.log('login, DB down    ->', login.status, (await login.json()).error, '(expect 500 + pg error)');
 console.log('unsigned webhook  ->', (await fetch(B + '/webhooks/telnyx', { method: 'POST', headers: j, body: '{}' })).status, '(expect 400)');
 const beep = await fetch(B + '/static/beep.wav');
-console.log('beep.wav          ->', beep.status, beep.headers.get('content-type'), beep.headers.get('content-length'), 'bytes');
+console.log('beep.wav          ->', beep.status, beep.headers.get('content-type'), beep.headers.get('content-length'), 'bytes', beep.headers.get('cache-control'), '(expect public, max-age=86400, immutable)');
 const ui = await fetch(B + '/');
 console.log('GET / (static UI) ->', ui.status, ui.headers.get('content-type'), '(expect 200 text/html once client/out exists)');
 const deep = await fetch(B + '/anything');

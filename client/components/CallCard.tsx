@@ -120,15 +120,15 @@ function Stage({ d, c }: { d: D; c: Card }) {
 }
 
 /** The identity header — the top of the card in every live/ended state, so who/why/history never sit
- *  below the fold. Leads with the person's name; with none, the company is the hero and the number
- *  drops to a secondary line with an inline "add contact name". Carries the lead-status chip and the
+ *  below the fold. Leads with the person's name; with none, the company (else the email) is the hero and
+ *  the number drops to a secondary line with an inline "add contact name". Carries the lead-status chip and the
  *  history summary so the rep knows the relationship before the first word. */
 function Identity({ d, c }: { d: D; c: Card }) {
   const lead = resolveLead(c);
   const headline = lead.headline ?? prettyPhone(c.phone);
   const sub = lead.headlineKind === 'name' ? [lead.role, lead.company].filter(Boolean).join(' · ')
-    : lead.headlineKind === 'company' ? lead.role ?? ''
-    : 'Not one of your leads — nothing on file';
+    : lead.headlineKind === 'number' ? 'Not one of your leads — nothing on file'
+    : lead.role ?? '';
   const status = lead.why[0]?.value;
   const others = (c.phones ?? []).filter((p) => p !== c.phone);
   const showNumberInId = lead.headlineKind !== 'number';

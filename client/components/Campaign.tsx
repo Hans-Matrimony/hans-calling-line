@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import type { useDialer, ActivityEvent, Card, Leg, NextLead, Mode } from '../lib/useDialer';
-import { emptyQueue, NOT_DUE, OUTCOME_LABEL, clock, listCountries, localTime, prettyPhone, relative, splitName } from '../lib/format';
+import { emptyQueue, NOT_DUE, OUTCOME_LABEL, clock, leadWho, listCountries, localTime, prettyPhone, relative, splitName } from '../lib/format';
 import { resolveLead } from '../lib/leadFields';
 import CallCard, { LeadPreview } from './CallCard';
 import Handset from './Handset';
@@ -22,7 +22,7 @@ function nextToCard(n: NextLead): Card {
 
 /** The standing Up Next column (JustCall parity): who's coming, their local time, tap to preview before
  *  dialing. Read-only while a call is live (you can't re-point a dial mid-call), highlighting the lead
- *  in play. Names prefer the person, then the company, then the number. */
+ *  in play. Names prefer the person, then the company, then the email, then the number - never the number twice. */
 function UpNextColumn({ leads, queued, currentId, previewId, onPreview }:
   { leads: NextLead[] | null; queued: number | undefined; currentId: number | null; previewId: number | null; onPreview?: (id: number) => void }) {
   return (
@@ -33,15 +33,15 @@ function UpNextColumn({ leads, queued, currentId, previewId, onPreview }:
           : (
             <ol className="uc-list">
               {leads.map((l) => {
-                const nm = splitName(l.name).name || l.extra?.company || prettyPhone(l.phone);
+                const who = leadWho(l.name, l.extra);
                 const active = l.id === currentId || (currentId == null && l.id === previewId);
                 return (
                   <li key={l.id}>
                     <button className={'uc-row' + (active ? ' on' : '')} onClick={() => onPreview?.(l.id)} disabled={!onPreview} aria-current={active}>
-                      <span className="uc-ava" aria-hidden>{initials(splitName(l.name).name || l.extra?.company || null) || <Phone />}</span>
+                      <span className="uc-ava" aria-hidden>{initials(who) || <Phone />}</span>
                       <span className="uc-main">
-                        <span className="uc-name">{nm}</span>
-                        <span className="uc-num mono">{prettyPhone(l.phone)}</span>
+                        <span className="uc-name">{who || prettyPhone(l.phone)}</span>
+                        {who && <span className="uc-num mono">{prettyPhone(l.phone)}</span>}
                       </span>
                       <span className="uc-lt">{localTime(l.utc_offset)?.text ?? '--:--'}</span>
                     </button>
@@ -177,7 +177,7 @@ export default function Campaign({ d, mode }: { d: D; mode: Mode }) {
   const why = off ? (d.softphone.error ?? 'Connect audio first.') : capped ? CAP_MSG : ready === 0 ? (queued ? (waiting ?? NOT_DUE) : EMPTY_QUEUE) : '';
   const err = d.err && d.err !== d.softphone.error ? d.err : off ? null : d.softphone.error; // when audio is off `why` already carries the softphone error
   const nextPreview = run && !why && d.upNext?.length
-    ? 'Next: ' + d.upNext.slice(0, c.legs).map((l) => splitName(l.name).name || prettyPhone(l.phone)).join(' and ')
+    ? 'Next: ' + d.upNext.slice(0, c.legs).map((l) => leadWho(l.name, l.extra) || prettyPhone(l.phone)).join(' and ')
       + (c.legs === 1 ? ` · ${localTime(d.upNext[0].utc_offset)?.text ?? '--:--'} their time · attempt ${d.upNext[0].attempt_count + 1}${d.upNext[0].last_outcome ? ', last ' + (OUTCOME_LABEL[d.upNext[0].last_outcome] ?? d.upNext[0].last_outcome) : ''}` : '')
     : '';
   const lastBurstLine = run && d.lastBurst

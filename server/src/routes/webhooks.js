@@ -38,7 +38,7 @@ async function handle(event) {
 }
 
 async function onRepEvent(type, p, { userId }) {
-  if (type === 'call.playback.ended') return onRepPlaybackEnded(p.call_control_id, p.media_url);
+  if (type === 'call.playback.ended') return onRepPlaybackEnded(p.call_control_id, p.media_name || p.media_url); // media_url is empty for a stored cue
   if (type === 'call.answered') {
     repUp.add(userId);
     emitToUser(userId, 'rep:connected', {});

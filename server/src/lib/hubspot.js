@@ -244,7 +244,7 @@ async function doPull(user) {
   const ids = leads.map((l) => l.id);
   const { rows: existing } = ids.length
     ? await q(`SELECT hubspot_contact_id AS hs, id, status, stopped_reason AS reason, hubspot_seen_at AS seen,
-                      utc_offset IS NULL AS "noTimezone"
+                      utc_offset IS NULL AS "noTimezone", name IS NULL AS "noName"
                FROM leads WHERE hubspot_contact_id = ANY($1)`, [ids])
     : { rows: [] };
   const byId = new Map(existing.map((e) => [e.hs, e]));
@@ -259,8 +259,10 @@ async function doPull(user) {
     if (!ex) { fresh.push(lead); continue; }
     // A lead with no timezone is in the queue but can never be due (queue.js needs utc_offset), and
     // with rejects silent the rep would never learn why. It is the one case worth re-reading every
-    // poll: fill the country in HubSpot and the lead starts dialing on its own.
-    if (ex.noTimezone) { fresh.push(lead); continue; }
+    // poll: fill the country in HubSpot and the lead starts dialing on its own. The other: a lead born
+    // thin (the keypad, a CSV with no name) whose contact does carry a name - re-read once, and the
+    // card fills in; a contact with no name in HubSpot either stays on the cheap path.
+    if (ex.noTimezone || (ex.noName && lead.name)) { fresh.push(lead); continue; }
     stamp.push(lead.id);
     if (ex.status === 'stopped' && String(ex.reason ?? '').startsWith('hubspot_untick')) resume.push(ex);
     // A finished lead comes back when the tick is new: either it was absent from the previous pull

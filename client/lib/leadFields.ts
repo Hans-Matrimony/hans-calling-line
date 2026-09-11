@@ -14,8 +14,8 @@ export type ResolvedLead = {
   name: string | null;
   role: string | null;      // job title
   company: string | null;
-  headline: string | null;         // what leads the card: name, else company, else null (caller shows the number)
-  headlineKind: 'name' | 'company' | 'number';
+  headline: string | null;         // what leads the card: name, else company, else email, else null (caller shows the number)
+  headlineKind: 'name' | 'company' | 'email' | 'number';
   why: WhyRow[];             // up to 3, the rail's top panel
   reach: ReachItem[];        // email / LinkedIn / CRM record / alternates
   more: MoreRow[];           // HubSpot leftovers, the drawer
@@ -99,10 +99,11 @@ export function resolveLead(c: Card): ResolvedLead {
     ? 'From your CSV — add a Lead Stage or Source column to fill this in.'
     : null;
 
-  // The card leads with the person; with no name it leads with the company (the rep still knows who they
-  // are calling at a glance) and drops the number to a secondary line. Only a bare number falls back to it.
-  const headline = name || company || null;
-  const headlineKind: ResolvedLead['headlineKind'] = name ? 'name' : company ? 'company' : 'number';
+  // The card leads with the person; with no name it leads with the company, then the email (the rep still
+  // knows who they are calling at a glance) and drops the number to a secondary line. Only a bare number
+  // falls back to it.
+  const headline = name || company || email || null;
+  const headlineKind: ResolvedLead['headlineKind'] = name ? 'name' : company ? 'company' : email ? 'email' : 'number';
   const needsName = !name && !isUnknown; // a real lead (usually a company) that simply has no contact name yet
 
   return { name, role, company, headline, headlineKind, why, reach, more, isUnknown, needsName, nudge };

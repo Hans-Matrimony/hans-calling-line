@@ -126,6 +126,14 @@ ALTER TABLE leads ADD COLUMN IF NOT EXISTS hubspot_seen_at TIMESTAMPTZ;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS stopped_reason TEXT;
 CREATE INDEX IF NOT EXISTS leads_source_idx ON leads (user_id, source, status);
 
+-- Keypad duplicates (2026-09-11): dialling an existing lead from the keypad used to make a second,
+-- nameless 'manual-<phone>' row that releaseLead kept requeueing as a bare number. Stop the copy;
+-- the real row keeps the queue slot. Its calls stay on it (the admin drawer still shows them).
+UPDATE leads m SET status = 'stopped', stopped_reason = 'duplicate'
+ WHERE m.hubspot_contact_id LIKE 'manual-%' AND m.name IS NULL AND m.status IN ('queued', 'later')
+   AND EXISTS (SELECT 1 FROM leads l WHERE l.user_id = m.user_id AND l.id <> m.id
+               AND l.hubspot_contact_id NOT LIKE 'manual-%' AND l.phones && m.phones);
+
 -- ===== Admin dashboard, wallet, recordings, HubSpot call logging (plan 2026-09-10) =====
 
 -- Roles: reps are the default; one admin (marketing@eazybe.com) sees every rep and never dials.

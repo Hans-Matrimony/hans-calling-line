@@ -1,7 +1,7 @@
 'use client';
 import type { ReactNode } from 'react';
 import type { HubSpot, QueueGroup, QueueLead, QueueOverview } from '../lib/useDialer';
-import { emptyQueue, OUTCOME_LABEL, clock, describeLater, describePull, listCountries, localTime, prettyPhone, relative, since, splitName } from '../lib/format';
+import { emptyQueue, OUTCOME_LABEL, clock, describeLater, describePull, leadWho, listCountries, localTime, prettyPhone, relative, since } from '../lib/format';
 import TimeBar from './TimeBar';
 
 /** The second inlet, in one line. Reps tick "Eazybe · Dial queue" on a contact in HubSpot and it lands
@@ -37,7 +37,7 @@ function Row({ l, onDial }: { l: QueueLead; onDial: (phone: string) => void }) {
     : l.why === 'gap' || l.why === 'hour' ? `opens ${clock(new Date(l.opensAt))}` : '';
   return (
     <button className="lead" onClick={() => onDial(l.phone)} title={`Load ${prettyPhone(l.phone)} into the dialer`}>
-      <span className="n">{splitName(l.name).name || l.extra?.company || prettyPhone(l.phone)}</span>
+      <span className="n">{leadWho(l.name, l.extra) || prettyPhone(l.phone)}</span>
       <span className="lt">{localTime(l.utc_offset)?.text ?? '--:--'}</span>
       <span className="m">
         {l.country ?? 'country unknown'}

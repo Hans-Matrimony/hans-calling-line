@@ -65,8 +65,10 @@ A contact with **no usable phone is skipped** (logged). A contact with no resolv
 **imported but ineligible** (null `utc_offset`) — same as the CSV path — until the country is filled
 in. A lead with no timezone is the **one** thing every poll re-reads (§5.3): it is sitting in the
 queue unable ever to be due, and with rejects silent the rep would never find out — so filling the
-country in HubSpot puts it into rotation on its own. Every other field is a snapshot: editing a
-queued contact's name or phone in HubSpot does not update the lead. Untick + re-tick does.
+country in HubSpot puts it into rotation on its own. The other exception is a lead with **no name**
+whose contact has one (born from the keypad, or a CSV with no name column): re-read once, and the card
+fills in. Every other field is a snapshot: editing a queued contact's name or phone in HubSpot does
+not update the lead. Untick + re-tick does.
 
 ## 5. The sync
 
@@ -91,6 +93,7 @@ Concurrent calls for the same rep coalesce (one in flight at a time).
    | yes | none | insert, `status='queued'`, stamp `hubspot_seen_at` |
    | yes | `queued` / `later` / `in_flight` | nothing; stamp `hubspot_seen_at` |
    | yes | any, but `utc_offset IS NULL` | re-read the contact — it can never be due until a country lands |
+   | yes | any, but `name IS NULL` and the contact has one | re-read once — a lead born thin (keypad, nameless CSV) gets its card filled in |
    | yes | `stopped` by an earlier untick | resume → `queued`, attempts kept |
    | yes | `connected` / `exhausted` / `stopped` by outcome, `hubspot_seen_at` ≥ last poll | stale tick; nothing |
    | yes | same, `hubspot_seen_at` < last poll | **re-tick** → `queued`, `attempt_count=0`, `number_attempts=0`, `phone_idx=1`, `next_call_at=now()` |

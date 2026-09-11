@@ -98,7 +98,7 @@ the moment someone runs it.
 ### Actions, highest value first
 1. Top up the balance and set a daily spend limit on the OVP.
 2. Turn off the five special destinations (satellite / UIFN / UPT / intl networks).
-3. Remove Iran from `server/src/lib/countries.js`.
+3. ~~Remove Iran from `server/src/lib/countries.js`.~~ Done 2026-09-11: a +98 lead now has no timezone and sits in Up next's "No country" group instead of failing every 10 minutes.
 4. Reconcile `telnyx-setup.mjs` `DESTINATIONS` with `countries.js` (or delete the OVP step).
 5. Buy a **+44** number to fill `FROM_NUMBER_EU` — GB numbers are available and the EU/MEA
    region already routes to it.

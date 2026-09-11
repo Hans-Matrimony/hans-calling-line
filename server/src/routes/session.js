@@ -4,8 +4,7 @@ import { q } from '../db/pool.js';
 import { emitToUser, pokeAdmins } from '../io.js';
 import { logCall } from '../lib/hubspotCalls.js';
 import { repUp, activeBurst } from '../state.js';
-import { claimLeads, releaseLead, pickFromNumber, sweepStuckLeads, listFromNumbers } from '../lib/queue.js';
-import { resolveLead, segmentFor } from '../lib/countries.js';
+import { claimLeads, claimManual, releaseLead, pickFromNumber, sweepStuckLeads, listFromNumbers } from '../lib/queue.js';
 import { normalizePhone } from '../lib/import.js';
 import { startBurst, cancelOpenLegs, stopRepAudio, leadCard, burstLegs, previewCard } from '../lib/burst.js';
 import { dialRep, hangup, ensureCredential, webrtcToken, sipDestination, sendDtmf } from '../telnyx.js';
@@ -135,8 +134,8 @@ router.post('/burst', async (req, res) => {
   } catch (e) { refuse(req, res, 502, e.message); }
 });
 
-// Manual dialer: the rep pastes a number and picks the caller ID. Saved as a lead (same
-// 'manual-<phone>' id the CSV import uses) so the call, card and disposition flow are identical.
+// Manual dialer: the rep pastes a number and picks the caller ID. Dialled as the rep's own lead for
+// that number (queue.js claimManual), so the call, card and disposition flow are identical.
 router.get('/from-numbers', async (_req, res) => res.json(await listFromNumbers()));
 
 router.post('/dial', async (req, res) => {
@@ -150,19 +149,9 @@ router.post('/dial', async (req, res) => {
     if (!chosen) return refuse(req, res, 400, 'Choose a caller ID.');
     if (!chosen.available) return refuse(req, res, 400, 'This caller ID has hit its daily cap — choose another.');
 
-    const resolved = resolveLead({ country: null, phone: to });
-    // startBurst dials the row's `phone`, and that moves as a multi-number lead rolls - so point it
-    // at the number the rep actually typed. If this lead already carries that number in its list,
-    // keep the list and just move to it; otherwise it is a plain one-number manual lead.
-    const { rows: [lead] } = await q(
-      `INSERT INTO leads (hubspot_contact_id, phone, phones, utc_offset, segment, status, user_id)
-       VALUES ($1, $2, ARRAY[$2], $3, $4, 'in_flight', $5)
-       ON CONFLICT (hubspot_contact_id) DO UPDATE
-         SET status = 'in_flight', user_id = $5, phone = EXCLUDED.phone,
-             phones = CASE WHEN EXCLUDED.phone = ANY(leads.phones) THEN leads.phones ELSE EXCLUDED.phones END,
-             phone_idx = coalesce(array_position(leads.phones, EXCLUDED.phone), 1)
-       RETURNING *`,
-      ['manual-' + to, to, resolved?.offset ?? null, segmentFor(resolved?.region), req.userId]);
+    // The rep's own lead that carries this number, moved onto it; a number nobody holds becomes a
+    // plain manual lead. Either way startBurst dials the row's `phone`, which is the number typed.
+    const lead = await claimManual(req.userId, to);
     res.json(await startBurst(req.userId, [lead], from));
   } catch (e) { refuse(req, res, 502, e.message); }
 });

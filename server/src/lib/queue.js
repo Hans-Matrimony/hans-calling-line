@@ -1,5 +1,6 @@
 import { q, pool } from '../db/pool.js';
 import { MAX_ATTEMPTS, MIN_GAP_HOURS, ATTEMPTS_PER_NUMBER, ROLL_GAP_MINUTES, LEAD_LOCAL_WINDOW, IGNORE_WINDOWS, DAILY_CAP_PER_NUMBER } from '../config.js';
+import { resolveLead, segmentFor } from './countries.js';
 
 // The lead's wall clock right now (a timestamp without zone), and its hour, as SQL over leads alias `l`.
 const LOCAL = `((now() AT TIME ZONE 'UTC') + (l.utc_offset * interval '1 hour'))`;
@@ -140,6 +141,33 @@ export async function claimLeads(userId, limit, segment = null) {
     await client.query('COMMIT');
     return rows;
   } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+}
+
+/** The lead a hand-dialled number belongs to, marked in_flight (keypad, tap-to-dial). The rep's own lead
+ *  that already carries the number wins - a HubSpot or CSV row over a 'manual-' one - and just moves onto
+ *  that number, so dialing a lead by hand never makes a second, nameless copy of it (seen live: 30 such
+ *  pairs, each requeued as a bare number for ever). Only a number nobody holds becomes a plain one-number
+ *  manual lead; another rep's 'manual-<phone>' row moves over via the ON CONFLICT, as before. */
+export async function claimManual(userId, to) {
+  const { rows: [own] } = await q(
+    `SELECT id FROM leads WHERE user_id = $1 AND $2 = ANY(phones)
+     ORDER BY hubspot_contact_id LIKE 'manual-%', hubspot_contact_id LIKE 'email-%', id LIMIT 1`, [userId, to]);
+  if (own) {
+    const { rows: [lead] } = await q(
+      `UPDATE leads SET status = 'in_flight', phone = $2, phone_idx = array_position(phones, $2) WHERE id = $1 RETURNING *`, [own.id, to]);
+    return lead;
+  }
+  const resolved = resolveLead({ country: null, phone: to });
+  const { rows: [lead] } = await q(
+    `INSERT INTO leads (hubspot_contact_id, phone, phones, utc_offset, segment, status, user_id)
+     VALUES ($1, $2, ARRAY[$2], $3, $4, 'in_flight', $5)
+     ON CONFLICT (hubspot_contact_id) DO UPDATE
+       SET status = 'in_flight', user_id = $5, phone = EXCLUDED.phone,
+           phones = CASE WHEN EXCLUDED.phone = ANY(leads.phones) THEN leads.phones ELSE EXCLUDED.phones END,
+           phone_idx = coalesce(array_position(leads.phones, EXCLUDED.phone), 1)
+     RETURNING *`,
+    ['manual-' + to, to, resolved?.offset ?? null, segmentFor(resolved?.region), userId]);
+  return lead;
 }
 
 // Is there a number after the one in play? Rolling to it is what makes alternates worth having.

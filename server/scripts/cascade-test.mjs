@@ -132,6 +132,27 @@ ok('corrected phone under the same email updates the lead', { ins: r2.inserted, 
 ok('one Tom Blake, on the new number',
   (await q(`SELECT phone FROM leads WHERE name = 'Tom Blake'`)).rows.map((x) => x.phone), ['+13024170399']);
 
+// --- 6. keypad / tap-to-dial: the rep's own lead, never a nameless twin ----------------------
+// Seen live: 30 leads each had a second 'manual-<phone>' row that releaseLead kept requeueing as a
+// bare number. A hand-dialled number that a lead already carries must dial that lead.
+const { claimManual } = await import('../src/lib/queue.js');
+const sara = (await q(`SELECT id FROM leads WHERE name = 'Sara Okafor'`)).rows[0].id;
+const rowsOn = async (p) => (await q(`SELECT count(*)::int n FROM leads WHERE user_id = $1 AND $2 = ANY(phones)`, [uid, p])).rows[0].n;
+let m = await claimManual(uid, '+442079460033'); // Sara's alternate, typed by hand
+ok('dialling a number a lead carries claims that lead', { id: m.id, st: m.status, p: m.phone, i: m.phone_idx, nm: m.name }, { id: sara, st: 'in_flight', p: '+442079460033', i: 2, nm: 'Sara Okafor' });
+ok('and makes no second row', await rowsOn('+442079460033'), 1);
+await releaseLead(sara, 'no_answer');
+ok('after the call it is back in the queue, still one row', [(await state(sara)).status, await rowsOn('+442079460033')], ['queued', 1]);
+m = await claimManual(uid, '+15550000001'); // a number nobody holds
+ok('an unknown number becomes a plain manual lead', { key: m.hubspot_contact_id, phones: m.phones, st: m.status }, { key: 'manual-+15550000001', phones: ['+15550000001'], st: 'in_flight' });
+// The one-off sweep in schema.sql stops the twins already made, and only those.
+await q(`INSERT INTO leads (hubspot_contact_id, phone, phones, segment, status, user_id) VALUES ('manual-+442079460022', '+442079460022', ARRAY['+442079460022'], 'non_india', 'queued', $1)`, [uid]);
+await q(readFileSync(new URL('../sql/schema.sql', import.meta.url), 'utf8'));
+ok('a nameless keypad twin of a real lead is stopped',
+  (await q(`SELECT status, stopped_reason FROM leads WHERE hubspot_contact_id = 'manual-+442079460022'`)).rows[0], { status: 'stopped', stopped_reason: 'duplicate' });
+ok('the real lead and a manual lead with no twin are untouched',
+  (await q(`SELECT status FROM leads WHERE id = $1 OR hubspot_contact_id = 'manual-+15550000001' ORDER BY id`, [sara])).rows.map((x) => x.status), ['queued', 'in_flight']);
+
 await q('DROP SCHEMA scratch CASCADE');
 await pool.end();
 console.log(fails ? `\n${fails} FAILED` : '\nall passed');

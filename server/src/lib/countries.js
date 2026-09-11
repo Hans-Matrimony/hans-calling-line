@@ -29,7 +29,8 @@ export const COUNTRIES = new Map([
   // Middle East -> eu
   ...C(4, 'eu', 'united arab emirates', 'uae', 'u.a.e.', 'dubai', 'oman'),
   ...C(3, 'eu', 'saudi arabia', 'ksa', 'qatar', 'kuwait', 'bahrain', 'jordan', 'lebanon', 'iraq'),
-  ...C(3.5, 'eu', 'iran'),
+  // Iran (+98) is deliberately absent: Telnyx cannot route it (sanctions, docs/TELNYX-COVERAGE.md s4), so a
+  // lead there gets no timezone and sits in "No country" instead of failing every 10 minutes for ever.
 
   // Africa -> eu
   ...C(1, 'eu', 'nigeria', 'morocco', 'algeria', 'tunisia'),
@@ -68,7 +69,6 @@ export const DIAL_CODES = new Map([
   ...D(0, 'eu', '233', '221', '225'),
   ...D(2, 'eu', '49', '33', '31', '34', '39', '32', '41', '43', '46', '47', '45', '48', '420', '36', '385', '381', '27', '260', '263', '267', '250', '258'),
   ...D(3, 'eu', '358', '30', '40', '359', '380', '90', '7', '972', '966', '974', '965', '973', '962', '961', '964', '20', '254', '255', '256', '251'),
-  ...D(3.5, 'eu', '98'),
   ...D(4, 'eu', '971', '968'),
   ...D(8, 'us', '65', '86', '60', '852', '63', '886'),
   ...D(7, 'us', '66', '84', '62', '855'),

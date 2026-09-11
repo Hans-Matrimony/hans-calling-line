@@ -215,6 +215,26 @@ ok('and never inserted', await lead('111'), undefined);
 CONTACTS.splice(-2, 2);
 await hubspot.pullQueue(uid);
 
+// --- 12c. a lead born with no name is re-read once the contact has one -------------------------
+// The keypad and a nameless CSV make rows with a timezone but no name; those never went back through
+// upsertLead, so HubSpot's name never landed (seen live: 2 of 34). One re-read, attempts kept; a
+// contact that has no name in HubSpot either is not re-read every minute for nothing.
+const thin = (id, phone) => q(
+  `INSERT INTO leads (hubspot_contact_id, phone, phones, country, utc_offset, segment, user_id, source, status, attempt_count)
+   VALUES ($1, $2, ARRAY[$2], NULL, 1, 'non_india', $3, 'manual', 'queued', 2)`, [id, phone, uid]);
+await thin('112', '+441632960099');
+await thin('113', '+441632960098');
+CONTACTS.push(contact('112', { firstname: 'Naveen', lastname: 'Mohan', phone: '+441632960099', country: 'United Kingdom', company: 'Acme' }));
+CONTACTS.push(contact('113', { phone: '+441632960098', country: 'United Kingdom' }));
+ok('the named one is re-read, the nameless one is only stamped', (await hubspot.pullQueue(uid)).refreshed, 1);
+const named = await lead('112');
+ok('name, country and card fields land; attempts and status kept',
+  [named.name, named.country, named.extra.company, named.attempt_count, named.status, named.source], ['Naveen Mohan', 'United Kingdom', 'Acme', 2, 'queued', 'hubspot']);
+ok('a contact with no name in HubSpot stays nameless', (await lead('113')).name, null);
+ok('and the next poll is back to the cheap path', (await hubspot.pullQueue(uid)).refreshed, 0);
+CONTACTS.splice(-2, 2);
+await hubspot.pullQueue(uid);
+
 // --- 13. a broken inlet says so in plain words -------------------------------------------------
 PROPS = PROPS.filter((p) => p !== 'eazybe_dial_queue');
 const fresh = await import('../src/lib/hubspot.js?missing-property');   // fresh module: empty schema cache

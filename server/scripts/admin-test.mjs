@@ -14,10 +14,13 @@ const calls = { recordStart: 0, recList: 0, recGet: 0, hsCallPost: [], hsCallPat
 let recordStartStatus = 200;
 let hsCallStatus = 200;
 let contactsByPhone = {};   // digits -> id, for the search stub
+let dialResponse = null;    // what POST /v2/calls answers (3d)
 const json = (body, status = 200) => ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body), headers: new Headers({ 'content-type': 'application/json' }), arrayBuffer: async () => new ArrayBuffer(0) });
 
 globalThis.fetch = async (url, init = {}) => {
   const u = String(url); const m = init.method ?? 'GET';
+  if (u === 'https://api.telnyx.com/v2/calls' && m === 'POST') return dialResponse();
+  if (u.startsWith('https://api.telnyx.com/v2/calls/') && /\/actions\/playback_(start|stop)$/.test(u)) return json({ data: { result: 'ok' } });
   if (u.startsWith('https://api.telnyx.com/v2/calls/') && u.endsWith('/actions/record_start')) { calls.recordStart++; return recordStartStatus === 200 ? json({ data: { result: 'ok' } }) : json({ errors: [{ detail: 'call not found' }] }, recordStartStatus); }
   if (u.startsWith('https://api.telnyx.com/v2/recordings/rec-1')) { calls.recGet++; return json({ data: { id: 'rec-1', status: 'completed', download_urls: { mp3: 'https://s3.test/rec-1.mp3' } } }); }
   if (u.startsWith('https://api.telnyx.com/v2/recordings')) { calls.recList++; return json({ data: [{ id: 'rec-1', status: 'completed', call_leg_id: 'leg-1', download_urls: { mp3: 'https://s3.test/rec-1.mp3' } }], meta: { page_number: 1, total_pages: 1, page_size: 20, total_results: 1 } }); }
@@ -193,6 +196,26 @@ const LB = await lead('manual-+1995157410', '+1995157410');
 await releaseLead(LB, 'invalid');
 const bad = (await q('SELECT status, attempt_count FROM leads WHERE id = $1', [LB])).rows[0];
 ok('a one-number lead with a dead number stops instead of looping', [bad.status, bad.attempt_count], ['stopped', 1]);
+
+// --- 3d. when nothing rang, the rep reads why - not "no legs could be placed" --------------------
+const { telnyxDetail } = await import('../src/telnyx.js');
+const { startBurst } = await import('../src/lib/burst.js');
+ok('the one readable line of a Telnyx error', telnyxDetail(new Error(REAL)), 'Destination Number is invalid D11. The destination number is invalid.');
+await q('UPDATE users SET telnyx_session_call_id = $2 WHERE id = $1', [rep.id, 'rep-leg-1']);
+const leadRow = async (id) => (await q('SELECT * FROM leads WHERE id = $1', [id])).rows[0];
+const LC = await lead('manual-+98136252291', '+98136252291');
+dialResponse = () => json({ errors: [{ code: 10010, detail: 'Destination Number is invalid D11. The destination number is invalid.' }], telnyx_error: { error_code: 'D11' } }, 403);
+ok('an invalid number: the plain-words refusal, in the same words as the tape row',
+  await startBurst(rep.id, [await leadRow(LC)], '+13024170301').then(() => null, (e) => e.message), 'That is not a valid phone number — the lead moves on.');
+ok('the lead stopped, with one failed call on record',
+  [(await leadRow(LC)).status, (await q(`SELECT count(*)::int n FROM calls WHERE lead_id = $1 AND disposition = 'failed'`, [LC])).rows[0].n], ['stopped', 1]);
+const LD = await lead('manual-+447700900123', '+447700900123');
+dialResponse = () => json({ errors: [{ code: 10001, detail: 'Service unavailable' }] }, 422);
+ok('any other refusal carries Telnyx\'s reason and says the lead comes back',
+  await startBurst(rep.id, [await leadRow(LD)], '+13024170301').then(() => null, (e) => e.message), 'The call could not be placed — Service unavailable. Back in the queue in 10 min.');
+const back = (await q(`SELECT status, round(EXTRACT(EPOCH FROM (next_call_at - now())) / 60)::int AS mins FROM leads WHERE id = $1`, [LD])).rows[0];
+ok('and it really is back in the queue in 10 min', back, { status: 'queued', mins: 10 });
+await q('DELETE FROM calls WHERE lead_id IN ($1, $2)', [LC, LD]); // today's failed dials would skew the dated metrics below
 
 // --- 4. metrics: IST day, segments, wrap median -------------------------------------------------
 const LI = await lead('202', '+919876543210', { segment: 'india', country: 'India' });

@@ -37,6 +37,12 @@ export function splitName(name: string | null) {
   return i === -1 ? { name, company: null } : { name: name.slice(0, i) || null, company: name.slice(i + 3) || null };
 }
 
+/** Who a lead is, for a list row: the person, else the company, else the email address as it is (never cut
+ *  to the local part), else null - the caller falls back to the number. Most HubSpot contacts here carry
+ *  only an email, and a row that repeats the number twice tells the rep nothing. */
+export const leadWho = (name: string | null, extra?: { company?: string; email?: string } | null) =>
+  splitName(name).name || extra?.company || extra?.email || null;
+
 export const OUTCOME_LABEL: Record<string, string> = {
   connected: 'connected', no_answer: 'no answer', later: 'call later', cancelled: 'cancelled', failed: 'failed', abandoned: 'abandoned', invalid: 'invalid number',
 };

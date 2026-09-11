@@ -1,5 +1,7 @@
 // Generates the rep-leg cue sounds in server/public as 8 kHz 16-bit mono WAV (what Telnyx plays best).
 // Run from server/: node scripts/gen-sounds.mjs
+// The server uploads these to Telnyx Media Storage on boot (telnyx.js ensureCues) and plays them by name,
+// so after regenerating one, delete it there once (telnyx().media.delete(name)) or the old sound keeps playing.
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
