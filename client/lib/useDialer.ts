@@ -167,7 +167,7 @@ export function useDialer(me: Me) {
     socket.on('connect', () => { sys('Live updates on'); if (!first) { sync(); refresh(); } first = false; }); // a reconnect may have missed events
     socket.on('disconnect', () => sys('Live updates lost — reconnecting'));
     socket.on('rep:ringing', () => { setRep('ringing'); sys('Connecting your audio…'); });
-    socket.on('rep:connected', () => { setRep('connected'); sys('Audio on — you hear silence until a lead answers'); });
+    socket.on('rep:connected', () => { setRep('connected'); sys('Audio on — a soft tick while it dials, a rising beep when someone answers, a low double beep when nobody does'); });
     // A live/ended card survives a drop so the rep can still save its outcome; only a ringing burst resets.
     socket.on('rep:disconnected', (p: { cause?: string }) => {
       setRep('disconnected'); setPhase((ph) => (ph === 'ringing' ? 'idle' : ph)); setLegs([]);
@@ -191,7 +191,7 @@ export function useDialer(me: Me) {
       tapePush('failed', label(p.name, p.phone), 'Picked up while you were already connecting — counts as an attempt, back in 2h', p.phone);
     });
     socket.on('lead:failed', (p: { name: string | null; phone: string; error: string }) => {
-      tapePush('failed', label(p.name, p.phone), 'Could not be dialed — back in the queue in 10 min', p.phone);
+      tapePush('failed', label(p.name, p.phone), p.error, p.phone); // the server says why, and whether the lead comes back
     });
     socket.on('call:bridged', () => sys('On the line'));
     // A HubSpot pull changed this rep's queue (a tick, an untick): say what arrived and show it, no reload.
@@ -216,6 +216,8 @@ export function useDialer(me: Me) {
       }
       if (!rows.length) tapePush(stopped ? 'cancelled' : 'no_answer', stopped ? 'Dialing stopped' : 'Nobody answered');
       setLastBurst({ result: stopped ? 'cancelled' : 'no_answer', names: rows.map((l) => label(l.name, l.phone)) });
+      // The handset's "last call" strip: nobody answered, so no outcome step follows - say so there instead of leaving "dialed".
+      setLastCall((lc) => lc && !lc.outcome ? { ...lc, outcome: stopped ? 'cancelled' : 'no_answer' } : lc);
       refresh();
     });
     return () => { socket.disconnect(); };

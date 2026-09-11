@@ -5,9 +5,16 @@ import { logCall } from './hubspotCalls.js';
 import { activeBurst } from '../state.js';
 import { releaseLead, pickFromNumber } from './queue.js';
 import { resolveLead } from './countries.js';
-import { hangup, beep, bridge, dialLead, startTick, noAnswerTone, stopPlayback, isInvalidDestination } from '../telnyx.js';
+import { hangup, beep, bridge, dialLead, startTick, noAnswerTone, stopPlayback, isInvalidDestination, telnyxDetail } from '../telnyx.js';
 
 const BEEP_TIMEOUT_MS = 900; // bridge anyway if Telnyx never reports the beep finished; short, to shrink the dead-air window in which a lead can hang up before we bridge
+
+// Rep-facing strings, shown verbatim in the UI (same rule as session.js: plain words, never "leg").
+const MSG = {
+  invalid: 'That is not a valid phone number — the lead moves on.',
+  notPlaced: (why) => `The call could not be placed — ${why}. Back in the queue in 10 min.`,
+  nothingDialed: 'Nothing was dialed — every caller ID has hit its daily cap.',
+};
 
 // Rep-leg audio cues. The beep must finish before we bridge, so we wait for Telnyx's
 // call.playback.ended for beep.wav on that leg (webhooks.js -> onRepPlaybackEnded).
@@ -124,8 +131,9 @@ async function onHangup(p, userId, burstId, leadId) {
 
   if (!c.disposition) {
     // Never answered. Timeout/busy/rejected -> no_answer. Dead numbers -> stop the lead.
+    // not_found is SIP 404 from the far end: the number does not exist there (seen ending in 1.3 s), not a busy line.
     // The WHERE guard turns a redelivered hangup into a no-op instead of a double-counted attempt.
-    const dead = /unallocated|invalid_number|number_changed|unassigned/.test(p.hangup_cause ?? '');
+    const dead = /unallocated|invalid_number|number_changed|unassigned|not_found/.test(p.hangup_cause ?? '');
     const { rowCount } = await q('UPDATE calls SET disposition = $2 WHERE id = $1 AND disposition IS NULL', [c.id, dead ? 'failed' : 'no_answer']);
     if (rowCount) {
       await releaseLead(leadId, dead ? 'invalid' : 'no_answer');
@@ -213,6 +221,11 @@ export async function startBurst(userId, leads, fromOverride = null, extra = {})
   const { rows: [burst] } = await q('INSERT INTO bursts (user_id) VALUES ($1) RETURNING id', [userId]);
   activeBurst.set(userId, burst.id);
   const legs = [];
+  let lastError = null; // what the rep is told when nothing rang
+  // The tick starts before the first dial goes out, not after the last one comes back: the rep hears
+  // dialing in progress from the moment they pressed the button, and a slow Telnyx round-trip is not dead air.
+  const rep = await repLeg(userId);
+  if (rep) startTick(rep).catch((e) => console.warn('tick failed', String(rep).slice(-8), e.message));
   for (const lead of leads) {
     // Caller ID follows the lead's Country column, as it always has - except on an alternate, where
     // the number's own dial code wins: a +44 alternate on an India-country lead answers far better
@@ -232,17 +245,20 @@ export async function startBurst(userId, leads, fromOverride = null, extra = {})
       // 16 of 73 dials in one day on 11 dead numbers, none of which ever consumed an attempt.
       // A transient error still costs nothing and comes back in 10 minutes ('cancelled').
       const dead = isInvalidDestination(e);
-      console.error('dial failed', lead.phone, dead ? 'invalid number, not retrying' : e.message);
+      console.error('dial failed', lead.phone, dead ? '(invalid, not retrying)' : '', e.message); // always the Telnyx body
       await q(`INSERT INTO calls (lead_id, burst_id, from_number, to_number, disposition) VALUES ($1, $2, $3, $4, 'failed')`, [lead.id, burst.id, from, lead.phone]);
       await releaseLead(lead.id, dead ? 'invalid' : 'cancelled');
-      emitToUser(userId, 'lead:failed', { leadId: lead.id, name: lead.name, phone: lead.phone,
-        error: dead ? 'That is not a valid phone number — the lead moves on.' : e.message });
+      lastError = dead ? MSG.invalid : MSG.notPlaced(telnyxDetail(e));
+      emitToUser(userId, 'lead:failed', { leadId: lead.id, name: lead.name, phone: lead.phone, error: lastError });
     }
   }
-  if (!legs.length) { activeBurst.delete(userId); throw new Error('no legs could be placed'); }
+  if (!legs.length) {
+    // Nothing rang: the rep reads why (the last refusal, in the same words as the tape row), not "no legs".
+    activeBurst.delete(userId);
+    if (rep) await stopPlayback(rep);
+    throw new Error(lastError ?? MSG.nothingDialed);
+  }
   emitToUser(userId, 'burst:started', { burstId: burst.id, legs, manual: !!fromOverride, ...extra });
   pokeAdmins('live');
-  const rep = await repLeg(userId);
-  if (rep) startTick(rep).catch((e) => console.warn('tick failed', e.message)); // rep hears dialing in progress
   return { burstId: burst.id, legs };
 }
