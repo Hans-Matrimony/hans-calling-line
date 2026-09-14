@@ -1,7 +1,8 @@
 // Small formatting helpers shared by the console panels.
 
 /** Lead-local time from a UTC offset in hours (e.g. "5.5", -4). */
-export function localTime(offset: string | number | null | undefined, now = new Date()): { hour: number; text: string } | null {
+export function localTime(offset: string | number | null | undefined, now = new Date(), timezone?: string | null): { hour: number; text: string } | null {
+  if (timezone) offset = zoneOffset(timezone, now);
   if (offset == null || offset === '') return null;
   const off = Number(offset);
   if (Number.isNaN(off)) return null;
@@ -76,16 +77,17 @@ export const DIAL_TIMEOUT = 30; // seconds a lead rings before the dialer gives 
 export const emptyQueue = (hubspot?: boolean) => hubspot
   ? 'Your queue is empty — tick "Eazybe · Dial queue" on a contact in HubSpot, or press Upload CSV.'
   : 'Your queue is empty — press Upload CSV to add leads.';
-export const NOT_DUE = 'Nobody is due right now — leads come back 2h after a no-answer, inside 10:00–19:00 their time, up to 6 tries.';
+export const NOT_DUE = 'Nobody is due right now — check Up next for each lead’s retry time and calling hours (10:00–19:00 their time).';
 
 /** One sentence for what a HubSpot pull did — the feed line, the toast and the Up next strip all say the same thing. */
-export function describePull(r: { added: number; resumed: number; reopened: number; removed: number; skipped: number; ticked: number }) {
+export function describePull(r: { added: number; resumed: number; reopened: number; removed: number; skipped: number; refreshed?: number; ticked: number }) {
   const bits = [
     r.added && `${r.added} pulled`,
     r.reopened && `${r.reopened} back for another run`,
     r.resumed && `${r.resumed} put back`,
     r.removed && `${r.removed} removed — unticked in HubSpot`,
-    r.skipped && `${r.skipped} skipped — no number, or a duplicate of another contact`,
+    r.refreshed && `${r.refreshed} refreshed`,
+    r.skipped && `${r.skipped} deferred or skipped`,
   ].filter(Boolean).join(' · ');
   return bits || `nothing new — ${r.ticked} contact${r.ticked === 1 ? '' : 's'} ticked`;
 }
@@ -101,19 +103,31 @@ export function toLocalInput(d: Date) {
 
 /** `hour`:00 on the lead's local day `dayOffset` days from now, as a datetime-local string on the rep's clock.
  *  Callbacks land inside the queue's own window instead of at "10am" on the rep's clock. */
-export function leadLocalAt(offset: string | number | null | undefined, dayOffset: number, hour: number): string | null {
+export function zoneOffset(timezone: string, at = new Date()): number {
+  const zone = new Intl.DateTimeFormat('en-US', { timeZone: timezone, timeZoneName: 'longOffset' })
+    .formatToParts(at).find((part) => part.type === 'timeZoneName')?.value ?? '';
+  const match = zone.match(/GMT([+-])(\d{2}):(\d{2})/);
+  return match ? (match[1] === '-' ? -1 : 1) * (+match[2] + +match[3] / 60) : 0;
+}
+
+export function leadLocalAt(offset: string | number | null | undefined, dayOffset: number, hour: number, timezone?: string | null, now = new Date()): string | null {
+  if (timezone) offset = zoneOffset(timezone, now);
   if (offset == null || offset === '') return null;
   const off = Number(offset);
   if (Number.isNaN(off)) return null;
-  const d = new Date(Date.now() + off * 3600000); // the lead's wall clock, carried as UTC fields
+  const d = new Date(now.getTime() + off * 3600000); // the lead's wall clock, carried as UTC fields
   d.setUTCDate(d.getUTCDate() + dayOffset); d.setUTCHours(hour, 0, 0, 0);
-  return toLocalInput(new Date(d.getTime() - off * 3600000));
+  let instant = new Date(d.getTime() - off * 3600000);
+  // The destination day may have a different UTC offset. Presets use 10:00, outside DST folds/gaps.
+  if (timezone) for (let i = 0; i < 3; i++) instant = new Date(d.getTime() - zoneOffset(timezone, instant) * 3600000);
+  return toLocalInput(instant);
 }
 
 /** "Tue 10:00 their time" for a chosen callback, so the rep sees the lead's clock, not just their own. */
-export function describeLater(laterAt: string, offset: string | number | null | undefined) {
+export function describeLater(laterAt: string, offset: string | number | null | undefined, timezone?: string | null) {
   const when = new Date(laterAt);
   if (Number.isNaN(when.getTime())) return '';
+  if (timezone) return when.toLocaleString('en-GB', { timeZone: timezone, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }) + ' their time';
   const off = offset == null || offset === '' ? NaN : Number(offset);
   if (Number.isNaN(off)) return when.toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
   const lead = new Date(when.getTime() + off * 3600000);

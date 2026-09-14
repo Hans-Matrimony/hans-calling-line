@@ -48,7 +48,7 @@ export default function Leads({ filters, tick, onLead }: { filters: Filters; tic
                   <td>{l.rep ? l.rep.split('@')[0] : <span className="dim">—</span>}</td>
                   <td className="dim">{l.source === 'manual' ? 'keypad' : l.source.toUpperCase()}</td>
                   <td><span className={'ad-pill ' + st[0]}>{st[1]}</span></td>
-                  <td className="num">{l.attempt_count}<span className="dim"> / 6</span></td>
+                  <td className="num">{l.attempt_count}<span className="dim"> / {l.attemptLimit}</span></td>
                   <td className="dim">{l.last_outcome ? OUTCOME_LABEL[l.last_outcome] ?? l.last_outcome : '—'}</td>
                   <td className={'mono' + (l.status === 'queued' || l.status === 'later' ? '' : ' dim')}>{(l.status === 'queued' || l.status === 'later') && next ? (next.getTime() <= Date.now() ? 'due now' : relative(next)) : '—'}</td>
                 </tr>

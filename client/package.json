@@ -6,7 +6,8 @@
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:ui": "node tests/ui-test.cjs"
   },
   "dependencies": {
     "@telnyx/webrtc": "^2.27.10",

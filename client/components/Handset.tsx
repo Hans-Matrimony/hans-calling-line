@@ -65,7 +65,8 @@ function Keypad({ d }: { d: D }) {
   const code = CODES.find((c) => c[0] === iso)?.[1] ?? '91';
   const full = '+' + code + local;
   const valid = local.length >= (iso ? 4 : 7) && /^\+\d{7,15}$/.test(full);
-  const ready = d.rep === 'connected' && !d.busy && !!from;
+  const available = d.fromNumbers.some((n) => n.number === from && n.available);
+  const ready = d.recovered && d.rep === 'connected' && !d.busy && available;
   const canDial = ready && valid;
   const regionOf = (num: string | null) => { const r = d.fromNumbers.find((n) => n.number === num)?.region; return r ? REGION[r] : null; };
 
@@ -85,7 +86,7 @@ function Keypad({ d }: { d: D }) {
   // A number handed over from Up next / Activity (tap-to-dial): load it; the rep presses Call.
   useEffect(() => { if (d.prefill) { type(d.prefill); d.setPrefill(null); digitsRef.current?.focus(); } }, [d.prefill]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const why = d.rep !== 'connected' ? 'Connect audio to call.' : !from && d.fromNumbers.length ? 'Every caller ID has hit its daily cap.' : !d.fromNumbers.length ? 'No caller IDs configured.'
+  const why = d.rep !== 'connected' ? 'Connect audio to call.' : !d.fromNumbers.length ? 'No caller IDs configured.' : !available ? 'Every caller ID has hit its daily cap.'
     : local && !valid ? (iso ? 'That number looks short.' : 'Start with the country code, e.g. 1 415 …') : '';
   const last = d.lastCall;
   const initials = (n: string | null) => (n ? n.split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase() : '');

@@ -1,0 +1,42 @@
+{
+  "checkedAt": "2026-09-12T12:42:42.572Z",
+  "browser": "Chromium 1234 headless",
+  "widths": [
+    {
+      "width": 1440,
+      "client": 1440,
+      "scroll": 1440
+    },
+    {
+      "width": 1280,
+      "client": 1280,
+      "scroll": 1280
+    },
+    {
+      "width": 960,
+      "client": 960,
+      "scroll": 960
+    },
+    {
+      "width": 768,
+      "client": 768,
+      "scroll": 768
+    },
+    {
+      "width": 390,
+      "client": 390,
+      "scroll": 390
+    }
+  ],
+  "consoleErrors": [],
+  "remoteRequests": [],
+  "verified": [
+    "notes survive state changes",
+    "outcome saves before manual Next lead",
+    "callback fields toggle",
+    "queue search filters",
+    "lead preview changes",
+    "before/after view works",
+    "no horizontal overflow"
+  ]
+}

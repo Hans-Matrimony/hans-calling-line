@@ -85,7 +85,7 @@ export type RepDetail = Filters & {
   byHour: Hour[]; byCountry: Country[]; queue: QueueRow[]; readiness: Readiness; hubspot: HubSpotPanel; recent: CallRow[]; now: Live | null;
 };
 export type LeadRow = {
-  id: number; name: string | null; phone: string; phones: string[]; country: string | null; utc_offset: string | null; segment: string;
+  id: number; name: string | null; phone: string; phones: string[]; country: string | null; utc_offset: string | null; timezone?: string | null; attemptLimit: number; segment: string;
   source: string; status: string; attempt_count: number; next_call_at: string; last_call_at: string | null; hubspot_contact_id: string | null;
   company: string | null; hubspot_url: string | null; rep_id: number | null; rep: string | null; last_outcome: string | null;
 };

@@ -33,20 +33,20 @@ function HubSpotStrip({ hs, onSync, busy }: { hs: HubSpot; onSync: () => void; b
 
 /** One row, identical for every group so tap-to-dial is the same everywhere. A held row also says when it opens. */
 function Row({ l, onDial }: { l: QueueLead; onDial: (phone: string) => void }) {
-  const opens = l.why === 'later' ? describeLater(l.next_call_at, l.utc_offset)
+  const opens = l.why === 'later' ? describeLater(l.next_call_at, l.utc_offset, l.timezone)
     : l.why === 'gap' || l.why === 'hour' ? `opens ${clock(new Date(l.opensAt))}` : '';
   return (
     <button className="lead" onClick={() => onDial(l.phone)} title={`Load ${prettyPhone(l.phone)} into the dialer`}>
       <span className="n">{leadWho(l.name, l.extra) || prettyPhone(l.phone)}</span>
-      <span className="lt">{localTime(l.utc_offset)?.text ?? '--:--'}</span>
+      <span className="lt">{localTime(l.utc_offset, new Date(), l.timezone)?.text ?? '--:--'}</span>
       <span className="m">
         {l.country ?? 'country unknown'}
-        {l.attempt_count > 0 ? ` · attempt ${l.attempt_count + 1}` : ''}
+        {l.attempt_count > 0 ? ` · attempt ${l.attempt_count + 1} of ${l.attemptLimit}` : ''}
         {l.phoneIdx > 1 ? ` · alt ${l.phoneIdx - 1} of ${l.phoneCount - 1}` : ''}
         {l.last_outcome ? ` · last ${OUTCOME_LABEL[l.last_outcome] ?? l.last_outcome}` : ''}
         {opens ? ` · ${opens}` : ''}
       </span>
-      <TimeBar offset={l.utc_offset} showTime={false} />
+      <TimeBar offset={l.utc_offset} timezone={l.timezone} showTime={false} />
     </button>
   );
 }
@@ -56,7 +56,7 @@ function head(g: QueueGroup): { title: string; note: string } {
   const at = g.opensAt ? new Date(g.opensAt) : null;
   switch (g.why) {
     case 'window': return { title: `Opens ${at ? clock(at) : '—'}`, note: [at && relative(at), listCountries(g.countries)].filter(Boolean).join(' · ') };
-    case 'gap': return { title: 'Back after the 2h gap', note: at ? `first ${relative(at)}` : '' };
+    case 'gap': return { title: g.retryMinutes ? `Back after ${g.retryMinutes === 120 ? '2h' : g.retryMinutes + ' min'}` : 'Waiting for retry', note: at ? `first ${relative(at)}` : '' };
     case 'hour': return { title: 'Opens next hour', note: 'already tried at this hour of their day' };
     case 'later': return { title: 'Callbacks you booked', note: at ? `first ${relative(at)}` : '' };
     case 'no_timezone': return { title: 'No country, so no calling hours', note: 'fill Country in HubSpot and it schedules itself' };

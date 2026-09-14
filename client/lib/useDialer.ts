@@ -7,7 +7,7 @@ import { useSoftphone } from './useSoftphone';
 export type Me = { id: number; email: string; phone: string | null; role?: 'rep' | 'admin' };
 export type Card = {
   callId: number; leadId: number; name: string | null; phone: string; country: string | null; segment: string;
-  utcOffset: string | number | null; hubspotId: string | null; extra: LeadExtra; attempt: number; lastOutcome: string | null; lastNote: string | null;
+  utcOffset: string | number | null; timezone?: string | null; attemptLimit: number; hubspotId: string | null; extra: LeadExtra; attempt: number; lastOutcome: string | null; lastNote: string | null;
   lastCallAt: string | null; everConnected: boolean | null; callCount: number; // history summary shown on the card
   phones: string[]; phoneIdx: number; // the lead's numbers in cascade order, and which one is in play
 };
@@ -19,16 +19,16 @@ export type Stats = { dialed_today: number; connected_today: number; talk_second
  *  missing scope, the checkbox property was never created) — always shown, unlike per-contact rejects. */
 export type HubSpot = { configured: boolean; ok?: boolean | null; error?: string | null; syncedAt?: string | null; inQueue?: number; lastChange?: SyncResult | null };
 /** What one pull did. `at` is set on the copy the server keeps as the rep's last change (and on the queue:synced event). */
-export type SyncResult = { added: number; resumed: number; reopened: number; removed: number; skipped: number; ticked: number; syncedAt: string; at?: string };
+export type SyncResult = { added: number; resumed: number; reopened: number; removed: number; skipped: number; refreshed?: number; ticked: number; syncedAt: string; at?: string };
 export type LastCall = { phone: string; name: string | null; from: string | null; at: Date; outcome: string | null };
 export type LegStatus = 'ringing' | 'answered' | 'cancelled' | 'abandoned';
 export type Leg = { leadId: number; name: string | null; phone: string; country: string | null; from: string; status: LegStatus; card?: Card };
-export type NextLead = { id: number; name: string | null; phone: string; phones: string[]; country: string | null; segment: string; utc_offset: string | null; attempt_count: number; status: string; next_call_at: string; last_outcome: string | null; lastCallAt: string | null; everConnected: boolean | null; extra: LeadExtra; phoneIdx: number; phoneCount: number };
+export type NextLead = { id: number; name: string | null; phone: string; phones: string[]; country: string | null; segment: string; utc_offset: string | null; timezone?: string | null; attemptLimit: number; attempt_count: number; status: string; next_call_at: string; last_outcome: string | null; lastCallAt: string | null; everConnected: boolean | null; extra: LeadExtra; phoneIdx: number; phoneCount: number };
 /** The one rule holding a lead back (server queue.js WHY), or null when it is due now. */
 export type QueueWhy = 'gap' | 'hour' | 'window' | 'later' | 'no_timezone' | null;
 export type QueueLead = NextLead & { opensAt: string; why: QueueWhy };
 /** One head on Up next: 'ready', 'window:<instant>' (one per opening time), or the why word. */
-export type QueueGroup = { key: string; why: QueueWhy; opensAt: string | null; count: number; countries: string[]; leads: QueueLead[] };
+export type QueueGroup = { retryMinutes?: number | null; key: string; why: QueueWhy; opensAt: string | null; count: number; countries: string[]; leads: QueueLead[] };
 export type QueueOverview = { now: string; total: number; ready: QueueGroup; later: QueueGroup[]; soonest: string | null };
 export type LeadPatch = { name?: string; company?: string; title?: string; email?: string; linkedin?: string; leadStage?: string; phones?: string[] };
 export type FromNumber = { number: string; region: 'india' | 'eu' | 'us'; usedToday: number; cap: number; available: boolean };
@@ -40,6 +40,7 @@ export type ActivityEvent = { id: string; at: Date; kind: EventKind; text: strin
 export type Mode = 'auto' | 'burst';
 export type Run = { mode: Mode; since: Date; endAfter: boolean };
 export type LastRun = { mode: Mode; since: Date; until: Date };
+export type SavedCall = { card: Card; label: string; note: string; status: string; nextCallAt: string | null; duration: number | null };
 export type HeldBack = { name: string | null; phone: string; at: string };
 type SessionState = { repUp: boolean; burstId: number | null; phase: Phase; legs: Leg[]; card: Card | null; answeredAt: string | null; duration: number | null };
 type BurstLeg = { leadId: number; name: string | null; phone: string; disposition: string | null };
@@ -91,6 +92,7 @@ const rowToEvent = (r: ActivityRow): ActivityEvent => ({ ...rowEvent(r), phone: 
  *  a tab switch or a server restart never strands a call. */
 export function useDialer(me: Me) {
   const softphone = useSoftphone();
+  const [recovered, setRecovered] = useState(false);
   const [rep, setRep] = useState<Rep>('disconnected');
   const [phase, setPhase] = useState<Phase>('idle');
   const [legs, setLegs] = useState<Leg[]>([]);
@@ -107,10 +109,12 @@ export function useDialer(me: Me) {
   const [feedLoaded, setFeedLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [note, setNote] = useState('');                             // shared by the handset Note tile and the lead card
   const [callerName, setCallerName] = useState('');                 // unknown-number capture: who this manual dial turned out to be
   const [callerCompany, setCallerCompany] = useState('');
   const [lastCall, setLastCall] = useState<LastCall | null>(null); // the handset's "last call" strip + redial
+  const [lastSaved, setLastSaved] = useState<SavedCall | null>(null);
   const [prefill, setPrefill] = useState<string | null>(null);     // a number handed to the handset from Up next / Activity (tap-to-dial)
   // Auto dial / Burst dial run. Lives here, not in the page, so switching tabs or a lead answering elsewhere keeps it.
   const [run, setRun] = useState<Run | null>(null);
@@ -122,6 +126,21 @@ export function useDialer(me: Me) {
   const manualRef = useRef(false);                                 // the burst in flight came from the manual keypad
   const phaseRef = useRef<Phase>('idle'); phaseRef.current = phase;
   const answeredRef = useRef<Date | null>(null); answeredRef.current = answeredAt;
+  const draftCall = useRef<number | null>(null);
+
+  // Keep an unsaved note through reloads in this tab, scoped to this rep and call.
+  useEffect(() => {
+    if (!card) { draftCall.current = null; return; }
+    const key = `eazybe.note.${me.id}.${card.callId}`;
+    try {
+      if (draftCall.current !== card.callId) {
+        draftCall.current = card.callId;
+        const saved = sessionStorage.getItem(key);
+        if (saved !== null) { setNote(saved); return; }
+      }
+      sessionStorage.setItem(key, note);
+    } catch { /* Storage can be unavailable in private browsing. The in-memory note still works. */ }
+  }, [card, note, me.id]);
 
   const push = useCallback((kind: EventKind, text: string, sub?: string, phone?: string) =>
     setFeed((f) => [{ id: 'e' + (++seq), at: new Date(), kind, text, sub, phone }, ...f].slice(0, FEED_MAX)), []);
@@ -135,21 +154,25 @@ export function useDialer(me: Me) {
 
   const refreshQueue = useCallback(() => {
     const groups = [...expandedRef.current].map((k) => '&group=' + encodeURIComponent(k)).join('');
-    api<QueueOverview>('/api/leads/queue?per=5' + groups).then(setQueue).catch(() => {});
+    api<QueueOverview>('/api/leads/queue?per=5' + groups).then(setQueue).catch((e) => setLoadError('Couldn’t refresh the queue: ' + (e as Error).message));
   }, []);
   const refresh = useCallback(() => {
-    api<Stats>('/api/leads/stats').then(setStats).catch(() => {});
-    api<FromNumber[]>('/api/session/from-numbers').then(setFromNumbers).catch(() => {});
-    api<NextLead[]>('/api/leads/next?n=10').then(setUpNext).catch(() => {});
+    setLoadError(null);
+    Promise.all([
+      api<Stats>('/api/leads/stats').then(setStats),
+      api<FromNumber[]>('/api/session/from-numbers').then(setFromNumbers),
+      api<NextLead[]>('/api/leads/next?n=10').then(setUpNext),
+    ]).catch((e) => setLoadError('Couldn’t refresh calling data: ' + (e as Error).message));
     refreshQueue();
   }, [refreshQueue]);
 
   /** Rebuild the call from the server's view of it. */
   const sync = useCallback(() => api<SessionState>('/api/session/state').then((s) => {
+    setRecovered(true);
     setRep(s.repUp ? 'connected' : 'disconnected');
     setPhase(s.phase); setLegs(s.legs ?? []); setCard(s.card ?? null);
     setAnsweredAt(s.answeredAt ? new Date(s.answeredAt) : null); setDuration(s.duration ?? null);
-  }).catch(() => {}), []);
+  }).catch((e) => setLoadError('Couldn’t restore your call: ' + (e as Error).message)), []);
 
   useEffect(() => {
     sync();
@@ -175,6 +198,7 @@ export function useDialer(me: Me) {
     });
     socket.on('burst:started', (p: { legs: Omit<Leg, 'status'>[]; manual?: boolean; heldBack?: HeldBack[] }) => {
       manualRef.current = !!p.manual;
+      setLastSaved(null);
       setLegs(p.legs.map((l) => ({ ...l, status: 'ringing' }))); setCard(null); setDuration(null); setAnsweredAt(null); setEndCause(null); setPhase('ringing'); setNote(''); setCallerName(''); setCallerCompany('');
       setLastBurst(null); setHeldBack(p.heldBack ?? []);
       setLastCall({ phone: p.legs[0].phone, name: p.legs[0].name, from: p.legs[0].from, at: new Date(), outcome: null });
@@ -188,7 +212,7 @@ export function useDialer(me: Me) {
     });
     socket.on('lead:abandoned', (p: { leadId: number; name: string | null; phone: string }) => {
       setLegs((ls) => ls.map((l) => (l.leadId === p.leadId ? { ...l, status: 'abandoned' } : l)));
-      tapePush('failed', label(p.name, p.phone), 'Picked up while you were already connecting — counts as an attempt, back in 2h', p.phone);
+      tapePush('failed', label(p.name, p.phone), 'Picked up while you were already connecting — counts as an attempt; retry time is shown in Up next', p.phone);
     });
     socket.on('lead:failed', (p: { name: string | null; phone: string; error: string }) => {
       tapePush('failed', label(p.name, p.phone), p.error, p.phone); // the server says why, and whether the lead comes back
@@ -196,6 +220,7 @@ export function useDialer(me: Me) {
     socket.on('call:bridged', () => sys('On the line'));
     // A HubSpot pull changed this rep's queue (a tick, an untick): say what arrived and show it, no reload.
     socket.on('queue:synced', (c: SyncResult) => { sys('HubSpot: ' + describePull(c)); refresh(); });
+    socket.on('queue:changed', refresh);
     socket.on('call:ended', (p: { callId: number; duration: number | null; cause?: string }) => {
       // The red button and the hangup webhook both report this call: one row, one refresh.
       const id = 'end' + p.callId;
@@ -208,6 +233,7 @@ export function useDialer(me: Me) {
     socket.on('call:error', (p: { error: string }) => { setErr(p.error); setPhase('ended'); push('error', p.error); });
     socket.on('burst:ended', (p: { result?: string; legs?: BurstLeg[] }) => {
       setPhase('idle'); setLegs([]);
+      setRun((r) => { if (r?.endAfter) { setLastRun({ mode: r.mode, since: r.since, until: new Date() }); return null; } return r; });
       const stopped = p?.result === 'cancelled';
       const rows = p.legs ?? [];
       for (const l of rows) {
@@ -247,8 +273,9 @@ export function useDialer(me: Me) {
   }, [push]);
 
   return {
-    me, rep, phase, legs, card, answeredAt, duration, endCause, stats, fromNumbers, upNext, queue, feed, feedLoaded, busy, err, softphone,
-    note, setNote, lastCall, prefill, setPrefill, run, lastRun, runTape, lastBurst, heldBack,
+    me, rep, recovered, phase, legs, card, answeredAt, duration, endCause, stats, fromNumbers, upNext, queue, feed, feedLoaded, busy, err, loadError, softphone,
+    retryLoad: () => { refresh(); void sync(); },
+    note, setNote, lastCall, lastSaved, dismissSaved: () => setLastSaved(null), prefill, setPrefill, run, lastRun, runTape, lastBurst, heldBack,
     /** "Show all N" on an Up next group: fetch it in full, and keep it open across refreshes. */
     expandGroup: (key: string) => { expandedRef.current.add(key); refreshQueue(); },
     startRun: (mode: Mode) => { if (!runRef.current) { setRunTape([]); setLastBurst(null); setRun({ mode, since: new Date(), endAfter: false }); } },
@@ -283,26 +310,20 @@ export function useDialer(me: Me) {
     sendDtmf: (digits: string) => post('/api/session/dtmf', { digits }).catch((e) => setErr((e as Error).message)),
     callerName, setCallerName, callerCompany, setCallerCompany,
     leadHistory: (leadId: number) => api<HistoryRow[]>(`/api/leads/${leadId}/history`),
-    // Inline lead edits from the panel: update the card and Up next at once (snappy), then reconcile
-    // with the server's normalised result. Persists straight to the lead, so the next attempt has it.
+    // Only show contact changes as saved after the server accepts and normalises them.
     patchLead: async (leadId: number, p: LeadPatch) => {
-      const ex: Partial<LeadExtra> = {};
-      for (const k of ['company', 'title', 'email', 'linkedin', 'leadStage'] as const) if (k in p) ex[k] = p[k];
-      const nm = (c: string | null) => ('name' in p ? (p.name?.trim() || null) : c);
-      setCard((c) => (c && c.leadId === leadId ? { ...c, name: nm(c.name), phones: p.phones ?? c.phones, extra: { ...c.extra, ...ex } } : c));
-      const fix = <L extends NextLead>(l: L): L => (l.id === leadId
-        ? { ...l, name: nm(l.name), phones: p.phones ?? l.phones, phoneCount: p.phones ? p.phones.length : l.phoneCount, extra: { ...l.extra, ...ex } }
-        : l);
+      const r = await patch<{ name: string | null; extra: LeadExtra; phones: string[]; phoneIdx: number }>(`/api/leads/${leadId}`, p);
+      const update = (c: Card) => ({ ...c, ...r, phone: r.phones[r.phoneIdx - 1] ?? c.phone });
+      setCard((c) => c && c.leadId === leadId ? update(c) : c);
+      setLastSaved((s) => s && s.card.leadId === leadId ? { ...s, card: update(s.card) } : s);
+      const fix = <L extends NextLead>(l: L): L => l.id === leadId
+        ? { ...l, ...r, phone: r.phones[r.phoneIdx - 1] ?? l.phone, phoneCount: r.phones.length } : l;
       setUpNext((list) => list && list.map(fix));
       setQueue((qo) => qo && { ...qo, ready: { ...qo.ready, leads: qo.ready.leads.map(fix) }, later: qo.later.map((g) => ({ ...g, leads: g.leads.map(fix) })) });
-      try {
-        const r = await patch<{ name: string | null; extra: LeadExtra; phones: string[]; phoneIdx: number }>(`/api/leads/${leadId}`, p);
-        setCard((c) => (c && c.leadId === leadId ? { ...c, name: r.name, extra: r.extra, phones: r.phones, phoneIdx: r.phoneIdx, phone: r.phones[r.phoneIdx - 1] ?? c.phone } : c));
-      } catch (e) { setErr((e as Error).message); }
     },
     disposition: (outcome: Outcome, opts: { laterAt?: string; notes?: string; subOutcome?: string; reason?: string } = {}) => runCmd('save outcome', async () => {
       if (!card) return;
-      await post('/api/session/disposition', {
+      const saved = await post<{ status: string; retryMinutes: number | null; nextCallAt: string }>('/api/session/disposition', {
         callId: card.callId, outcome, subOutcome: opts.subOutcome, reason: opts.reason || undefined,
         notes: (opts.notes ?? note) || undefined,
         laterAt: opts.laterAt ? new Date(opts.laterAt).toISOString() : undefined,
@@ -312,11 +333,15 @@ export function useDialer(me: Me) {
       const who = callerName.trim() || card.name || company || label(null, card.phone);
       const n = (opts.notes ?? note).trim();
       const lbl = (opts.subOutcome && SUB_OUTCOME_LABEL[opts.subOutcome]) || OUTCOME_TEXT[outcome];
-      const bits = [lbl, opts.reason, n].filter(Boolean).join(' · ');
+      const retry = saved.status === 'queued' && saved.retryMinutes ? `Retry after ${saved.retryMinutes} min, within calling hours` : saved.status === 'exhausted' ? 'Attempt limit reached' : '';
+      const bits = [lbl, opts.reason, n, retry].filter(Boolean).join(' · ');
       tapePush(feedKind(outcome, opts.subOutcome), who, bits, card.phone, company && company !== who ? company : undefined);
+      setLastSaved({ card: { ...card, name: callerName.trim() || card.name }, label: lbl, note: n, status: saved.status, nextCallAt: saved.nextCallAt, duration });
+      try { sessionStorage.removeItem(`eazybe.note.${me.id}.${card.callId}`); } catch { /* optional tab storage */ }
       setCard(null); setDuration(null); setAnsweredAt(null); setEndCause(null); setPhase('idle'); setLegs([]); refresh();
       setNote(''); setCallerName(''); setCallerCompany(''); setLastCall((lc) => lc && { ...lc, outcome });
       setRun((r) => { if (r?.endAfter) { setLastRun({ mode: r.mode, since: r.since, until: new Date() }); return null; } return r; });
+      return saved;
     }),
     // "Sync now" on Up next. Start dialing and opening Up next already pull on their own, so this is
     // the fallback for a rep who ticked something in HubSpot and does not want to wait even that long.

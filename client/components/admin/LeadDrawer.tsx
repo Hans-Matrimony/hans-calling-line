@@ -35,7 +35,7 @@ export default function LeadDrawer({ id, tick, onClose }: { id: number; tick: nu
                 <dt>Rep</dt><dd>{l.rep ? l.rep.split('@')[0] : '—'}</dd>
                 <dt>Source</dt><dd>{l.source === 'manual' ? 'typed on the keypad' : l.source.toUpperCase()}</dd>
                 <dt>Status</dt><dd>{l.status}{(l.status === 'queued' || l.status === 'later') && next ? <span className="muted"> · next call {next.getTime() <= Date.now() ? 'due now' : relative(next)}</span> : ''}</dd>
-                <dt>Attempts</dt><dd>{l.attempt_count} of 6</dd>
+                <dt>Attempts</dt><dd>{l.attempt_count} of {l.attemptLimit}</dd>
                 {l.phones?.length > 1 && <><dt>Numbers</dt><dd className="mono">{l.phones.map(prettyPhone).join(' · ')}</dd></>}
                 {l.hubspot_url && <><dt>HubSpot</dt><dd><a href={l.hubspot_url} target="_blank" rel="noreferrer">Open the contact <External /></a></dd></>}
               </dl>

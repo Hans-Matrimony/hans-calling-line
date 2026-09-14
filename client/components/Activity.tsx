@@ -14,7 +14,8 @@ export default function Activity({ feed, loaded, onDial }: { feed: ActivityEvent
   return (
     <section className="panel">
       <div className="panel-head">
-        <h2 className="panel-title">Activity{calls > 0 && <b>{calls} today</b>}</h2>
+        <h2 className="panel-title">Today’s activity{calls > 0 && <b>{calls} events</b>}</h2>
+        <span className="hint">Calls and updates, newest first. Use the phone button to load a number into the dialer.</span>
       </div>
       {!loaded && calls === 0 ? <p className="empty">Loading…</p>
         : feed.length === 0 ? <p className="empty">Nothing yet today. Calls you place show up here as they happen.</p>

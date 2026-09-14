@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Eazybe Dialer · UI proposal</title>
+  <link rel="stylesheet" href="fonts.css">
+  <link rel="stylesheet" href="sample.css">
+</head>
+<body>
+  <div class="reviewbar">
+    <div><b>Design preview</b><span>Fictional data · no real calls</span></div>
+    <div class="review-switch" aria-label="Compare design"><button data-view="proposal" class="chosen" aria-pressed="true">Proposed UI</button><button data-view="baseline" aria-pressed="false">Current UI</button></div>
+    <a href="PLAN.md" target="_blank">Read the plan <span aria-hidden>↗</span></a>
+  </div>
+  <div id="baseline-view" hidden><div class="baseline-caption">Current Auto dial tab rendered directly from the existing source, with fictional data. Controls in this comparison view are static.</div><iframe title="Current source-rendered Eazybe interface" src="baseline.html"></iframe></div>
+  <div class="shell" id="proposal-view">
+    <aside class="sidebar">
+      <div class="brand"><strong>Eazybe</strong><span>DIALER</span></div>
+      <span class="nav-section">WORKSPACE</span>
+      <nav aria-label="Main navigation">
+        <button class="nav" data-nav="dialer"><i data-icon="keypad"></i>Dialer</button>
+        <button class="nav active" data-nav="auto" aria-current="page"><i data-icon="play"></i>Auto dial</button>
+        <button class="nav" data-nav="burst"><i data-icon="layers"></i>Burst dial</button>
+        <button class="nav" data-nav="activity"><i data-icon="clock"></i>Activity</button>
+        <button class="nav" data-nav="upnext"><i data-icon="list"></i>Up next<span class="nav-count">64</span></button>
+      </nav>
+      <div class="sidebar-bottom"><div class="account-avatar">AK</div><div><b>Alex Kim</b><span>Sales representative</span></div><button class="icon-button" aria-label="Account details" data-info="account"><i data-icon="more"></i></button></div>
+    </aside>
+    <div class="main">
+      <header class="topbar">
+        <div class="breadcrumb">Workspace<span>/</span><b id="crumb-mode">Auto dial</b></div>
+        <div class="today"><span>TODAY</span><b>42</b> dialed<i></i><b>12</b> connected<i></i><b>29<span>%</span></b> connection rate</div>
+        <button class="audio-state" id="audio-toggle"><span class="dot green"></span><span id="audio-text">Audio connected</span><i data-icon="chevron"></i></button>
+      </header>
+      <main class="workspace">
+        <div class="page-heading"><div><div class="eyebrow">YOUR CALLING WORKSPACE</div><h1 id="page-title">Auto dial<span>One conversation at a time.</span></h1></div><button class="button subtle" id="upload"><i data-icon="upload"></i>Import leads</button></div>
+        <div class="scenario-strip"><span>Try a call state</span><div class="scenario-buttons" aria-label="Preview call states"><button data-state="ready">Ready to dial</button><button data-state="live" class="chosen" aria-pressed="true">On a call</button><button data-state="ended">Save outcome</button><button data-state="saved">Outcome saved</button></div><span class="scenario-note">Preview controls</span></div>
+        <div class="work-grid">
+          <aside class="queue-panel">
+            <div class="queue-heading"><h2>Up next</h2><span class="badge soft">18 ready</span></div>
+            <label class="search"><i data-icon="search"></i><input id="queue-search" type="search" placeholder="Find in this queue" aria-label="Find in this queue"><span class="key">/</span></label>
+            <div class="queue-label"><span>YOUR LEADS</span><span>LOCAL TIME</span></div>
+            <div id="queue-list" class="queue-list"></div>
+            <div class="queue-bottom"><div><span class="dot amber"></span><b>46 waiting</b><button id="queue-explain">Why?</button></div><p>Calling hours, retry gaps and callbacks.</p><div class="sync-status"><i data-icon="check"></i>HubSpot synced 2 min ago</div></div>
+          </aside>
+          <section class="conversation" aria-label="Current conversation">
+            <div class="phase-track"><span id="step-ready"><i>1</i>Review lead</span><div></div><span id="step-live" class="current"><i>2</i>Conversation</span><div></div><span id="step-ended"><i>3</i>Save outcome</span></div>
+            <div class="call-status-row"><span class="eyebrow" id="stage-eyebrow">CURRENT CONVERSATION</span><span id="stage-status" class="badge success"><span class="dot green"></span>On the line</span></div>
+            <div class="identity"><div class="lead-avatar" id="lead-avatar">MP</div><div class="identity-main"><h2 id="lead-name">Maya Patel</h2><p id="lead-role">Revenue Operations Lead</p><div id="lead-company">Northstar Commerce</div></div><div class="timer" id="timer">02<span>:</span>34<small>CALL DURATION</small></div></div>
+            <div class="lead-meta"><span class="phone" id="lead-phone">+44 20 7946 0000</span><span id="attempt-meta">Attempt 3 of 6</span><span class="badge soft" id="lead-source">Demo requested</span></div>
+            <div class="last-touch"><i data-icon="history"></i><div><b>Last call: no answer</b><span>Yesterday at 14:20 · 2 previous attempts</span></div><button id="history-button">View history<i data-icon="arrow"></i></button></div>
+            <div class="conversation-body">
+              <section id="ready-panel" hidden><div class="section-heading"><h3>Before you call</h3><span class="badge success">Ready now</span></div><p class="body-text">Maya requested a demo through HubSpot. Review the contact details and previous calls, then start the conversation.</p><div class="readiness"><div><i data-icon="check"></i>Inside their calling hours<span>10:10 in London</span></div><div><i data-icon="check"></i>Retry gap complete<span>Last attempt yesterday</span></div><div><i data-icon="check"></i>Caller ID available<span>42 of 100 dials used</span></div></div></section>
+              <section id="live-panel"><div class="section-heading"><label for="call-note">Call notes</label><span>Included with the outcome</span></div><textarea id="call-note" spellcheck="false">Interested in connecting WhatsApp conversations to HubSpot. Team of 12 reps. Wants to see how follow-ups are assigned.</textarea><div class="note-footer"><span>Keep the context for your next conversation.</span><span class="note-shortcut"><i data-icon="edit"></i>Notes stay with this call</span></div></section>
+              <section id="outcome-panel" hidden><div class="section-heading"><h3>How did the call go?</h3><span>Select one outcome</span></div><div class="outcome-grid" id="outcome-grid"></div><div id="callback-fields" class="callback-fields" hidden><label>Callback date and time<input id="callback-time" type="datetime-local" value="2026-09-14T14:30"></label><span>Shown in your time · IST</span></div><details class="outcome-notes"><summary>Call notes <span>Included with the outcome</span></summary><p id="notes-copy"></p></details></section>
+              <section id="saved-panel" hidden><div class="saved-mark"><i data-icon="check"></i></div><h3>Outcome saved</h3><p id="saved-copy">Interested · Notes included</p><p class="body-text">Your next lead is ready. Start when you are.</p><div class="next-person"><span class="small-avatar">OG</span><div><b>Oliver Grant</b><span>Founder · Brightline Studio</span></div><span class="mono">10:10</span></div></section>
+            </div>
+            <div id="action-area" class="action-area"><div class="call-tools"><button class="button" id="mute"><i data-icon="mic"></i><span>Mute</span></button><button class="button" id="keypad"><i data-icon="keypad"></i>Keypad</button></div><button class="button danger" id="main-action"><i data-icon="phone"></i>Hang up</button></div>
+            <div class="caller-id"><i data-icon="phone"></i>Calling from <b>+44 20 7946 0099</b><span>42 / 100 daily dials</span></div>
+          </section>
+          <aside class="context-column">
+            <section class="time-panel"><div class="small-label"><i data-icon="clock"></i>THEIR LOCAL TIME</div><div class="local-time">10:10<span>London, UK</span></div><div class="time-window" role="img" aria-label="10:10 local time, inside calling hours 10:00 to 19:00"><div></div><i></i></div><div class="window-labels"><span>10:00</span><span class="window-open">Calling hours open</span><span>19:00</span></div></section>
+            <section class="contact-panel"><div class="section-heading"><h2>Contact details</h2><button id="edit-contact">Edit<i data-icon="edit"></i></button></div><dl><div><dt>Company</dt><dd id="detail-company">Northstar Commerce</dd></div><div><dt>Email</dt><dd id="detail-email">maya.patel@example.com</dd></div><div><dt>Lead source</dt><dd>Demo requested</dd></div><div><dt>Phone numbers</dt><dd class="mono" id="detail-phone">+44 20 7946 0000</dd><dd class="detail-muted">Primary · number 1 of 1</dd></div><div><dt>Owner</dt><dd>Alex Kim <span class="tiny-badge">You</span></dd></div></dl><button class="crm-link" id="crm"><span class="crm-dot">●</span>Contact in HubSpot<i data-icon="external"></i></button></section>
+            <div class="context-tip"><i data-icon="list"></i><p><b>Finish this conversation first.</b>Save the outcome, then press Next lead to continue your run.</p></div>
+          </aside>
+        </div>
+        <section class="run-panel"><div class="run-title"><i data-icon="activity"></i><div><h2>This run</h2><span>Started 14:15</span></div></div><div class="run-tape" id="run-tape" aria-label="12 calls in this run"></div><div class="run-stats"><b>12 <span>dialed</span></b><b class="green-text">4 <span>connected</span></b><button id="run-history">View calls<i data-icon="arrow"></i></button></div><button class="button subtle stop-run" id="stop-run">End after this call</button></section>
+        <div class="workspace-footer"><span><span class="dot green"></span>All systems connected</span><span>Your queue · Your caller IDs · Your conversations</span></div>
+      </main>
+    </div>
+  </div>
+  <dialog id="info-dialog"><div class="dialog-heading"><h2 id="dialog-title"></h2><button class="icon-button" id="close-dialog" aria-label="Close dialog"><i data-icon="close"></i></button></div><div id="dialog-body"></div></dialog>
+  <div class="toast" role="status" id="toast" hidden></div>
+  <script src="sample.js"></script>
+</body>
+</html>

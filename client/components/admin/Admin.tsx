@@ -68,7 +68,7 @@ export default function Admin({ me, onLogout }: { me: Me; onLogout: () => void }
             {t.id === 'reps' && reps.data && <b>{reps.data.length}</b>}
           </button>
         ))}
-        <div className="ad-foot">Every number is the IST calendar day. Rep screens are unchanged.</div>
+        <div className="ad-foot">Admin workspace<br />Reporting days use India Standard Time.</div>
       </aside>
 
       <main className="ad-main">

@@ -4,98 +4,65 @@ import type { useDialer, Card, LeadPatch } from '../lib/useDialer';
 import { localTime, prettyPhone } from '../lib/format';
 import { resolveLead } from '../lib/leadFields';
 import TimeBar from './TimeBar';
-import { Clock, User, Building, Briefcase, Mail, LinkedIn, Tag, Phone, External, Check } from './icons';
+import { Clock, Check, External } from './icons';
 
 type D = ReturnType<typeof useDialer>;
-type IconC = React.ComponentType<{ size?: number }>;
+const FIELDS = [['name', 'Name'], ['company', 'Company'], ['title', 'Job title'], ['email', 'Email'], ['linkedin', 'LinkedIn'], ['leadStage', 'Lead stage'], ['alt1', 'Alternate 1'], ['alt2', 'Alternate 2']] as const;
+type Draft = Record<typeof FIELDS[number][0], string>;
 
-/** The editable contact panel beside a call (call-card v2, JustCall parity). Everything the rep needs on
- *  the lead - and can fix on the spot: name, company, title, email, LinkedIn, lead source, and the two
- *  alternate numbers that feed the dialer's cascade. Each edit saves straight to the lead, so the next
- *  attempt and any export carry it. Shown the same before the dial, during, and after. */
 export default function LeadRail({ d, c }: { d: D; c: Card }) {
-  const [open, setOpen] = useState(false);
-  const lead = resolveLead(c);
-  const lt = localTime(c.utcOffset);
-  const set = (p: LeadPatch) => d.patchLead(c.leadId, p);
-
-  // Alternate numbers: the panel edits everything after the first entry in the cascade.
-  const primary = c.phones?.[0] ?? c.phone;
-  const alts = (c.phones ?? []).filter((p) => p !== primary);
-  const saveAlt = (idx: number, v: string) => {
-    const next = [...alts]; next[idx] = v.trim();
-    set({ phones: [primary, ...next].filter(Boolean) });
-  };
-
-  return (
-    <aside className="lead-panel" aria-label="Contact details">
-      <header className="lp-time">
-        <Clock />
-        {lt ? <><b>It&rsquo;s {lt.text} there</b>{c.country && <span> · {c.country}</span>}</> : <b className="muted">Timezone unknown</b>}
-        {lt && <TimeBar offset={c.utcOffset} showTime={false} />}
-      </header>
-
-      <div className="lp-fields">
-        <Field label="Name" Icon={User} value={lead.name} onSave={(v) => set({ name: v })} />
-        <Field label="Company" Icon={Building} value={lead.company} onSave={(v) => set({ company: v })} />
-        <Field label="Job title" Icon={Briefcase} value={lead.role} onSave={(v) => set({ title: v })} />
-        <Field label="Email" Icon={Mail} value={fieldStr(c, 'email')} type="email" link={(v) => 'mailto:' + v} onSave={(v) => set({ email: v })} />
-        <Field label="LinkedIn" Icon={LinkedIn} value={fieldStr(c, 'linkedin')} link={(v) => (/^https?:\/\//.test(v) ? v : null)} onSave={(v) => set({ linkedin: v })} />
-        <Field label="Lead source" Icon={Tag} value={fieldStr(c, 'leadStage')} onSave={(v) => set({ leadStage: v })} />
-        <Field label="Alternate 1" Icon={Phone} value={alts[0] ?? null} mono placeholder="Add (+country code)" onSave={(v) => saveAlt(0, v)} />
-        <Field label="Alternate 2" Icon={Phone} value={alts[1] ?? null} mono placeholder="Add (+country code)" onSave={(v) => saveAlt(1, v)} />
-      </div>
-
-      {lead.more.length > 0 && (
-        <div className="lp-more">
-          <button className="rail-more" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-            {open ? 'Hide' : `More from HubSpot (${lead.more.length})`}
-          </button>
-          {open && <dl className="kv more">{lead.more.map((m) => (<div key={m.label}><dt>{m.label}</dt><dd>{m.value}</dd></div>))}</dl>}
-        </div>
-      )}
-    </aside>
-  );
-}
-
-const fieldStr = (c: Card, k: keyof Card['extra']) => { const v = c.extra?.[k]; return v == null || v === '' ? null : String(v); };
-
-/** One editable row: click the value (or "Add") to edit; Enter or blur saves, Escape cancels. A saved
- *  tick flashes so the rep sees it stuck. Links open in place but don't swallow the click-to-edit. */
-function Field({ label, Icon, value, placeholder = 'Add', type = 'text', mono, link, onSave }:
-  { label: string; Icon: IconC; value: string | null; placeholder?: string; type?: string; mono?: boolean; link?: (v: string) => string | null; onSave: (v: string) => void }) {
   const [editing, setEditing] = useState(false);
-  const [val, setVal] = useState(value ?? '');
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
-  const ref = useRef<HTMLInputElement>(null);
-  useEffect(() => { if (!editing) setVal(value ?? ''); }, [value, editing]);
-  useEffect(() => { if (editing) ref.current?.focus(); }, [editing]);
-
-  const commit = () => {
-    setEditing(false);
-    if ((val.trim() || '') !== (value ?? '')) { onSave(val.trim()); setSaved(true); setTimeout(() => setSaved(false), 1200); }
+  const lock = useRef(false);
+  const [, tick] = useState(0);
+  useEffect(() => { const t = setInterval(() => tick((n) => n + 1), 60000); return () => clearInterval(t); }, []);
+  const lead = resolveLead(c);
+  const lt = localTime(c.utcOffset, new Date(), c.timezone);
+  const primary = c.phones[0] ?? c.phone;
+  const edit = () => {
+    setDraft({ name: lead.name || '', company: lead.company || '', title: lead.role || '', email: c.extra.email || '', linkedin: c.extra.linkedin || '', leadStage: c.extra.leadStage || '', alt1: c.phones[1] || '', alt2: c.phones[2] || '' });
+    setEditing(true); setError(''); setSaved(false);
   };
-  const href = value && link ? link(value) : null;
-  const external = !!href && /^https?:\/\//.test(href);
-
-  return (
-    <div className={'lp-row' + (editing ? ' editing' : '')}>
-      <span className="lp-label"><Icon size={15} />{label}</span>
-      {editing ? (
-        <div className="lp-edit">
-          <input ref={ref} className="field lp-input" type={type} value={val} inputMode={mono ? 'tel' : undefined}
-            onChange={(e) => setVal(e.target.value)} onBlur={commit}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(); } else if (e.key === 'Escape') { setVal(value ?? ''); setEditing(false); } }} />
-          <span className="keyhint"><kbd>Enter</kbd> save<span className="lp-hint-sep">·</span><kbd>Esc</kbd> cancel</span>
-        </div>
-      ) : (
-        <button className={'lp-value' + (value ? (mono ? ' mono' : '') : ' empty')} onClick={() => setEditing(true)} title="Click to edit">
-          {value
-            ? (href ? <a href={href} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>{value}{external && <External size={12} />}</a> : (mono ? prettyPhone(value) : value))
-            : placeholder}
-          {saved && <i className="lp-saved" aria-label="saved"><Check size={14} /></i>}
-        </button>
-      )}
-    </div>
-  );
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!draft || lock.current) return;
+    lock.current = true; setSaving(true); setError('');
+    const { alt1, alt2, ...fields } = draft;
+    const p: LeadPatch = { ...fields, phones: [primary, alt1.trim(), alt2.trim()].filter(Boolean) };
+    try { await d.patchLead(c.leadId, p); setEditing(false); setSaved(true); }
+    catch (e) { setError((e as Error).message); }
+    finally { lock.current = false; setSaving(false); }
+  };
+  const details = [
+    ['Company', lead.company], ['Job title', lead.role], ['Email', c.extra.email], ['LinkedIn', c.extra.linkedin],
+    ...lead.why.map((w) => [w.label, w.value]),
+  ].filter(([, value]) => value);
+  return <aside className="cw-context" aria-label="Contact context">
+    <section className="cw-local">
+      <span className="cw-overline"><Clock size={14} />Their local time</span>
+      <div><b>{lt ? lt.text : 'Unknown'}</b><span>{c.country || 'No country'}</span></div>
+      {lt ? <TimeBar offset={c.utcOffset} timezone={c.timezone} showTime={false} /> : <p>Add a country in HubSpot to determine calling hours.</p>}
+    </section>
+    <section className="cw-contact">
+      <div className="cw-section-head"><h3>Contact details</h3>{!editing && <button className="cw-link" onClick={edit}>Edit</button>}</div>
+      {saved && <p className="cw-success" role="status"><Check size={14} />Contact saved</p>}
+      {editing && draft ? <form className="cw-edit" onSubmit={save} aria-label="Edit contact">
+        {FIELDS.map(([key, label], i) => <label key={key}>{label}<input className="field" autoFocus={i === 0} type={key === 'email' ? 'email' : key.startsWith('alt') ? 'tel' : 'text'} value={draft[key]} placeholder={key.startsWith('alt') ? '+country code and number' : label} disabled={saving} onChange={(e) => setDraft({ ...draft, [key]: e.target.value })} /></label>)}
+        {error && <p className="cw-error" role="alert">Couldn’t save: {error}</p>}
+        <div className="cw-edit-actions"><button type="submit" className="btn btn-blue" disabled={saving}>{saving ? 'Saving…' : 'Save contact'}</button><button type="button" className="btn" disabled={saving} onClick={() => setEditing(false)}>Cancel</button></div>
+      </form> : <>
+        <dl className="cw-details">{details.map(([label, value], i) => <div key={label! + i}><dt>{label}</dt><dd>
+          {label === 'Email' ? <a href={'mailto:' + value}>{value}</a> : label === 'LinkedIn' && /^https?:\/\//.test(value!) ? <a href={value!} target="_blank" rel="noreferrer">View profile <External size={12} /></a> : value}
+        </dd></div>)}
+          <div><dt>Phone numbers</dt><dd>{(c.phones.length ? c.phones : [c.phone]).map((p, i) => <span className="cw-phone mono" key={p}>{prettyPhone(p)}<small>{i === 0 ? 'Primary' : `Alternate ${i}`}{p === c.phone && c.phones.length > 1 ? ' · current' : ''}</small></span>)}</dd></div>
+          <div><dt>Assigned to</dt><dd>{d.me.email}</dd></div>
+        </dl>
+        {lead.reach.find((r) => r.kind === 'hubspot' && r.href && /^https?:\/\//.test(r.href)) && <a className="cw-link cw-crm" href={lead.reach.find((r) => r.kind === 'hubspot')!.href} target="_blank" rel="noreferrer">Open in HubSpot <External size={13} /></a>}
+      </>}
+      {lead.more.length > 0 && <details className="cw-more"><summary>More from HubSpot ({lead.more.length})</summary><dl className="cw-details">{lead.more.map((m) => <div key={m.label}><dt>{m.label}</dt><dd>{m.value}</dd></div>)}</dl></details>}
+    </section>
+  </aside>;
 }

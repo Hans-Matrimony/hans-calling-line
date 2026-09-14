@@ -1,0 +1,630 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Current Eazybe UI — source-rendered baseline</title><link rel="stylesheet" href="fonts.css"><style>/* Eazybe Dialer — light console.
+   White paper, Eazybe blue for the one primary action, and three call-state lamps that never
+   compete with it: amber = ringing, green = live, coral = hang up. --blue is the single brand token. */
+:root {
+  --blue: #1e5eff;
+  --blue-ink: #0b3fd6;
+  --blue-dim: rgba(30, 94, 255, .10);    /* fills only */
+  --blue-ring: rgba(30, 94, 255, .22);   /* focus ring — visible without darkening fills */
+  --blue-line: rgba(30, 94, 255, .42);
+  --bg: #f6f8fc;
+  --panel: #ffffff;
+  --panel-2: #f1f4f9;
+  --line: #e5e9f2;                        /* passive container / divider hairline */
+  --line-2: #d3d9e6;                      /* interactive control resting border, off-lamp */
+  --line-3: #c2c9d8;                      /* hover border, neutral/off swatch */
+  --ink: #0f172a;
+  --ink-2: #3b4453;
+  --muted: #6b7486;
+  /* Semantic trios {base, dim, ink, line}: base = lamps/fills/large numerals, ink = small text (AA on
+     white), dim = tinted fill, line = 1px state border. */
+  --amber: #d97706;  --amber-dim: rgba(217, 119, 6, .12);  --amber-ink: #b45309;  --amber-line: rgba(217, 119, 6, .42);
+  --green: #0f9d6e;  --green-dim: rgba(15, 157, 110, .12);  --green-ink: #0a7a54;  --green-line: rgba(15, 157, 110, .42);
+  --coral: #e5484d;  --coral-dim: rgba(229, 72, 77, .12);   --coral-ink: #c62a2f;  --coral-line: rgba(229, 72, 77, .42);
+  /* Radius scale (5 steps): xs micro-chrome, sm controls/fields, md nested blocks, lg every surface, pill. */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius: 12px;
+  --radius-pill: 999px;
+  /* Spacing scale (4px base) + semantic aliases. */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px; --sp-6: 24px;
+  --pad-card: 16px; --gap-col: 16px; --gap-stack: 12px;
+  /* Elevation: flat chrome carries none; sm resting panels; md the working call surface; lg popovers. */
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, .04), 0 4px 10px -6px rgba(15, 23, 42, .10);
+  --shadow-md: 0 1px 2px rgba(15, 23, 42, .05), 0 10px 28px -18px rgba(15, 23, 42, .20);
+  --shadow-lg: 0 6px 12px -4px rgba(15, 23, 42, .10), 0 24px 48px -24px rgba(15, 23, 42, .28);
+  --shadow: var(--shadow-md);
+  --ease-out: cubic-bezier(.2, 0, 0, 1);
+  /* Type roles compose the next/font families (set on <html> in layout.tsx) with real fallbacks, so the
+     loaded faces actually paint and there is no :root/next-font name collision. */
+  --font-ui: var(--font-hanken), 'Hanken Grotesk', system-ui, sans-serif;
+  --font-display: var(--font-saira), 'Saira SemiCondensed', var(--font-hanken), system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--ink); }
+body { font: 15px/1.45 var(--font-ui); -webkit-font-smoothing: antialiased; }
+h1, h2, h3, p { margin: 0; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: default; opacity: .45; }
+:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 3px; }
+a { color: var(--blue-ink); }
+svg { flex: none; }
+
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+.small { font-size: 12.5px; }
+
+/* One keyboard-hint chip everywhere (call-card v2 polish): a mono key label a rep can act on. */
+kbd { display: inline-flex; align-items: center; font: 500 10.5px/1 var(--font-mono); padding: 3px 6px; border-radius: var(--radius-xs); border: 1px solid var(--line-2); background: var(--panel-2); color: var(--muted); white-space: nowrap; }
+.btn-blue kbd, .btn-green kbd, .btn-coral kbd { border-color: transparent; background: rgba(255, 255, 255, .2); color: #fff; }
+.keyhint { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
+.keyhint kbd { padding: 2px 5px; }
+
+/* ---------- controls ---------- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 9px 14px; border-radius: var(--radius-sm); border: 1px solid var(--line-2);
+  background: var(--panel); color: var(--ink); font-weight: 500; line-height: 1.2;
+  transition: background .12s, border-color .12s, color .12s, transform .06s;
+}
+.btn:hover:not(:disabled) { background: var(--panel-2); border-color: var(--line-3); }
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn svg { width: 15px; height: 15px; }
+.btn-ghost { background: transparent; border-color: transparent; color: var(--ink-2); }
+.btn-ghost:hover:not(:disabled) { background: var(--panel-2); border-color: transparent; }
+.btn-blue { background: var(--blue); border-color: var(--blue); color: #fff; font-weight: 600; }
+.btn-blue:hover:not(:disabled) { background: var(--blue-ink); border-color: var(--blue-ink); }
+.btn-green { background: var(--green); border-color: var(--green); color: #fff; font-weight: 600; }
+.btn-green:hover:not(:disabled) { background: var(--green-ink); border-color: var(--green-ink); }
+.btn-coral { background: var(--coral); border-color: var(--coral); color: #fff; font-weight: 600; }
+.btn-coral:hover:not(:disabled) { background: var(--coral-ink); border-color: var(--coral-ink); }
+/* One honest disabled recipe for the filled primaries: a calm flat grey, not a washed-out tint. */
+.btn-blue:disabled, .btn-green:disabled, .btn-coral:disabled { opacity: 1; background: var(--line-2); border-color: var(--line-2); color: var(--muted); box-shadow: none; }
+.btn-lg { padding: 14px 32px; font-size: 17px; border-radius: var(--radius-pill); }
+.btn-mini { padding: 4px 10px; font-size: 12.5px; color: var(--muted); }
+.btn-mini:hover:not(:disabled) { color: var(--ink); }
+
+.field {
+  width: 100%; padding: 9px 11px; border-radius: var(--radius-sm); border: 1px solid var(--line-2);
+  background: var(--panel); color: var(--ink);
+  transition: border-color .12s var(--ease-out), box-shadow .12s var(--ease-out);
+}
+.field::placeholder { color: var(--muted); }
+.field:focus { border-color: var(--blue); outline: none; box-shadow: 0 0 0 3px var(--blue-ring); }
+textarea.field { resize: vertical; min-height: 56px; line-height: 1.4; }
+select.field { appearance: none; padding-right: 28px; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: calc(100% - 15px) 55%, calc(100% - 10px) 55%; background-size: 5px 5px; background-repeat: no-repeat; }
+
+/* ---------- lamps ---------- */
+.lamp { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--line-2); flex: none; }
+.lamp.amber { background: var(--amber); box-shadow: 0 0 0 3px var(--amber-dim); animation: pulse 1.2s ease-in-out infinite; }
+.lamp.green { background: var(--green); box-shadow: 0 0 0 3px var(--green-dim); }
+.lamp.coral { background: var(--coral); box-shadow: 0 0 0 3px var(--coral-dim); }
+.lamp.blue { background: var(--blue); box-shadow: 0 0 0 3px var(--blue-dim); }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+
+/* ---------- login ---------- */
+.center { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
+.login { width: min(360px, 100%); display: grid; gap: 14px; padding: 28px 26px 26px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+.login .brand { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.login label { display: grid; gap: 5px; font-size: 13px; color: var(--muted); }
+.brand-name { font-family: var(--font-display); font-weight: 700; font-size: 24px; letter-spacing: .01em; text-transform: uppercase; color: var(--blue); }
+.brand-sub { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
+
+/* ---------- shell ---------- */
+.console { min-height: 100vh; display: grid; grid-template-rows: auto 1fr auto; min-width: 0; }
+.topbar {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 12px 22px; border-bottom: 1px solid var(--line); background: var(--panel);
+}
+.audio { display: inline-flex; align-items: center; gap: 8px; padding: 5px 6px 5px 12px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--panel); font-size: 13.5px; color: var(--ink-2); }
+.audio .btn { padding: 5px 12px; font-size: 13px; border-radius: 999px; }
+.stats { display: flex; gap: 22px; margin-left: auto; }
+.stat { display: grid; line-height: 1.1; }
+.stat b { font-family: var(--font-mono); font-weight: 500; font-size: 22px; letter-spacing: .01em; font-variant-numeric: tabular-nums; color: var(--ink); }
+.stat b.green { color: var(--green); }
+.stat span { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
+.topbar .who { font-size: 13px; color: var(--muted); max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; min-width: 0; }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.panel-title { font-size: 11.5px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); font-weight: 600; }
+.panel-title b { font-family: var(--font-mono); font-weight: 500; color: var(--ink-2); letter-spacing: 0; text-transform: none; margin-left: 6px; }
+.panel-head + * { margin-top: 12px; }
+
+.bottombar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 10px 22px; font-size: 12.5px; color: var(--muted); }
+.bottombar .num { display: inline-flex; align-items: center; gap: 6px; }
+.bottombar .cap { width: 44px; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.bottombar .cap i { display: block; height: 100%; background: var(--ink-2); }
+.bottombar .cap i.hot { background: var(--amber); }
+.bottombar .right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.bottombar .btn { padding: 5px 10px; font-size: 12.5px; }
+
+/* ---------- call stage (call-card v2) ----------
+   Two columns: the lead card (identity + note while live, identity + the seven outcome tiles when the
+   call ends) and the context rail. The same shape in both states - only the card's lower half changes -
+   so nothing jumps when the line drops. The handset's control rail sits full-width beneath. */
+.stage { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.lead-card { display: grid; gap: 0; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-md); overflow: hidden; transition: box-shadow .2s var(--ease-out), border-color .2s var(--ease-out); }
+.lead-card.live { border-color: var(--green-line); box-shadow: 0 0 0 3px var(--green-dim), var(--shadow-md); }
+
+.call-status { display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 10px var(--pad-card); border-bottom: 1px solid var(--line); }
+.call-status .eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.call-status .eyebrow.on { color: var(--green); }
+.call-status .eyebrow .lamp { width: 8px; height: 8px; }
+.call-from { font-size: 12.5px; color: var(--muted); }
+.call-clk { margin-left: auto; font-family: var(--font-mono); font-weight: 500; font-size: 30px; line-height: 1; letter-spacing: .01em; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.call-clk.live { color: var(--green); }
+
+.lead-card .who { display: grid; grid-template-columns: 46px 1fr; gap: 14px; padding: var(--pad-card); align-items: start; }
+.lead-card .who .ava { width: 46px; height: 46px; border-radius: var(--radius); background: var(--panel-2); color: var(--ink-2); display: grid; place-items: center; font-family: var(--font-ui); font-weight: 600; font-size: 16px; }
+.lead-card .who .ava svg { width: 20px; height: 20px; color: var(--muted); }
+.lead-card .who .nm { font-family: var(--font-ui); font-weight: 600; font-size: 24px; line-height: 1.15; letter-spacing: -.01em; overflow-wrap: anywhere; }
+.lead-card .who .nm.num { font-family: var(--font-mono); font-weight: 500; letter-spacing: 0; font-size: 22px; }
+.lead-card .who .role { color: var(--ink-2); font-size: 15px; margin-top: 2px; }
+.lead-card .who .idline { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; font-size: 13px; color: var(--muted); }
+.lead-card .who .idline .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--ink-2); font-size: 13px; }
+.lead-card .who .idline > span + span::before { content: '·'; margin-right: 8px; color: var(--line-2); }
+
+.band { display: grid; gap: 8px; padding: 4px var(--pad-card) 18px; }
+.band .rail-lbl { margin-top: 6px; }
+.identify { display: grid; gap: 8px; }
+.identify-row { display: flex; gap: 8px; }
+.identify-row .field { flex: 1; min-height: 40px; }
+
+.wrap { display: grid; gap: 9px; padding: 4px var(--pad-card) 18px; }
+.wrap .rail-lbl { margin-top: 6px; }
+.tiles { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.otile { display: grid; gap: 10px; align-content: space-between; min-height: 72px; padding: 10px 11px; border: 1px solid var(--line-2); border-radius: var(--radius-md); background: var(--panel); text-align: left; transition: border-color .12s var(--ease-out), background .12s var(--ease-out), box-shadow .12s var(--ease-out), transform .06s; }
+.otile:hover:not(:disabled) { border-color: var(--line-3); background: var(--panel-2); }
+.otile:active:not(:disabled) { transform: translateY(1px); }
+.otile .otile-top { display: flex; align-items: center; justify-content: space-between; }
+.otile .sw { width: 16px; height: 16px; color: var(--line-3); }
+.otile .sw.green { color: var(--green); } .otile .sw.blue { color: var(--blue); } .otile .sw.coral { color: var(--coral); } .otile .sw.grey { color: var(--line-3); }
+.otile kbd { font: 500 10.5px/1 var(--font-mono); padding: 2px 5px; border-radius: var(--radius-xs); border: 1px solid var(--line); color: var(--muted); }
+.otile b { font-weight: 500; font-size: 13.5px; line-height: 1.25; }
+.otile.on-green { border-color: var(--green); background: var(--green-dim); box-shadow: 0 0 0 1px var(--green) inset; }
+.otile.on-blue { border-color: var(--blue); background: var(--blue-dim); box-shadow: 0 0 0 1px var(--blue) inset; }
+.otile.on-coral { border-color: var(--coral); background: var(--coral-dim); box-shadow: 0 0 0 1px var(--coral) inset; }
+.otile.on-grey { border-color: var(--line-2); background: var(--panel-2); box-shadow: 0 0 0 1px var(--line-2) inset; }
+
+.sched { display: grid; gap: 9px; padding: 12px 14px; border: 1px solid var(--blue-line); background: var(--blue-dim); border-radius: var(--radius-md); box-shadow: var(--shadow-lg); }
+.sched.reasons { border-color: var(--coral-line); background: var(--coral-dim); }
+.sched .chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.chip { border: 1px solid var(--line-2); background: var(--panel); border-radius: var(--radius-pill); padding: 7px 13px; font-size: 13.5px; font-weight: 500; color: var(--ink); transition: background .12s var(--ease-out), border-color .12s var(--ease-out), color .12s var(--ease-out), transform .06s; }
+.chip:hover:not(:disabled) { border-color: var(--line-3); }
+.chip:active:not(:disabled) { transform: translateY(1px); }
+.chip.on { border-color: var(--blue); background: var(--blue); color: #fff; }
+.chip.on-coral { border-color: var(--coral); background: var(--coral); color: #fff; }
+.sched .btn { justify-self: start; }
+
+/* context rail - identical live and ended (LeadRail.tsx) */
+.lead-rail { display: grid; gap: 12px; align-content: start; }
+.rail-panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; display: grid; gap: 9px; box-shadow: var(--shadow-sm); }
+.rail-panel.muted-panel { background: var(--panel-2); box-shadow: none; }
+.rail-lbl { font-size: 10.5px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.rail-hint { font-size: 13px; color: var(--ink-2); line-height: 1.45; }
+.kv { display: grid; gap: 7px; margin: 0; }
+.kv > div { display: grid; grid-template-columns: 96px 1fr; gap: 10px; align-items: baseline; }
+.kv dt { color: var(--muted); font-size: 12.5px; }
+.kv dd { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.kv.more { padding-top: 9px; border-top: 1px dashed var(--line-2); }
+.rail-more { justify-self: start; background: none; border: 0; padding: 0; font-size: 12.5px; font-weight: 500; color: var(--blue-ink); }
+.rail-more:hover { text-decoration: underline; }
+.rail-when { font-size: 13px; color: var(--muted); }
+.rail-quote { font-size: 13.5px; color: var(--ink-2); line-height: 1.5; }
+.reach { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; font-size: 13px; }
+.reach li { display: flex; gap: 9px; align-items: center; color: var(--ink-2); overflow-wrap: anywhere; }
+.reach .reach-ico { width: 16px; flex: none; text-align: center; color: var(--muted); font-size: 12px; }
+.reach .reach-lnk { color: var(--ink-2); border-bottom: 1px solid var(--line-2); text-decoration: none; }
+.reach .reach-lnk:hover { color: var(--blue-ink); border-color: var(--blue); }
+.reach .reach-time .tbar { width: 64px; margin-left: 2px; }
+
+/* ringing preview - one identity card per leg, read while it rings */
+.stage-preview { display: grid; gap: 12px; }
+.stage-preview.pair { grid-template-columns: 1fr 1fr; }
+.ring-card { background: var(--panel); border: 1px solid rgba(217, 119, 6, .42); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+.ring-who { padding: 14px 18px 16px; display: grid; gap: 4px; }
+.ring-who .nm { font-family: var(--font-ui); font-weight: 600; font-size: 20px; letter-spacing: -.01em; overflow-wrap: anywhere; }
+.ring-who .role { font-size: 13.5px; color: var(--ink-2); }
+.ring-who .idline { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+
+.hint { font-size: 13px; color: var(--muted); }
+.err { color: var(--coral-ink); font-size: 13.5px; }
+
+
+/* local time window bar */
+.tbar { position: relative; height: 5px; border-radius: 3px; background: var(--line); overflow: visible; }
+.tbar .win { position: absolute; top: 0; bottom: 0; left: calc(100% * 10 / 24); width: calc(100% * 9 / 24); background: var(--line-2); border-radius: 3px; }
+.tbar .now { position: absolute; top: -3px; width: 2px; height: 11px; border-radius: 1px; background: var(--amber); transform: translateX(-1px); }
+.tbar.in .now { background: var(--green); }
+.tbar.in .win { background: var(--green-dim); }
+
+/* up next */
+.next { display: grid; }
+.next .lead { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; align-items: center; padding: 9px 0; border-top: 1px solid var(--line); }
+.next .lead:first-child { border-top: 0; padding-top: 0; }
+.next .n { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.next .lt { font-family: var(--font-mono); font-size: 13px; color: var(--ink-2); }
+.next .m { font-family: var(--font-mono); font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; grid-column: 1; }
+.next .tbar { width: 56px; grid-column: 2; }
+.empty { color: var(--muted); font-size: 13.5px; line-height: 1.45; }
+.empty svg { display: block; margin: 2px auto 9px; width: 26px; height: 26px; color: var(--line-3); }
+
+
+/* activity */
+.feed { display: grid; max-height: 46vh; overflow: auto; margin: 0 -6px; padding: 0 6px; }
+.feed .ev { display: grid; grid-template-columns: 40px 9px 1fr; gap: 8px; align-items: baseline; padding: 6px 0; border-top: 1px solid var(--line); font-size: 13.5px; }
+.feed .ev:first-child { border-top: 0; }
+.feed .t { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+.feed .lamp { width: 7px; height: 7px; transform: translateY(-1px); animation: none; box-shadow: none; }
+.feed .what { min-width: 0; overflow-wrap: anywhere; }
+.feed .what .n { color: var(--ink); }
+.feed .what .d { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+.feed .ev.sys .what { color: var(--muted); font-size: 12.5px; }
+
+/* ---------- responsive ---------- */
+@media (max-width: 980px) {
+  .dialer, .dialer.in-call { grid-template-columns: 1fr; padding: 14px; gap: 14px; }
+  .app { grid-template-columns: 1fr; }
+  .side { position: static; height: auto; flex-direction: row; align-items: center; gap: 2px; padding: 8px 12px; border-right: 0; border-bottom: 1px solid var(--line); overflow-x: auto; }
+  .side .brand { padding: 0 10px 0 4px; }
+  .nav { padding: 8px 10px; white-space: nowrap; }
+  .nav.on::before { display: none; }
+  .nav b { display: none; }
+  .page { padding: 14px; }
+  .stats { gap: 16px; }
+  .stat b { font-size: 19px; }
+  .topbar { padding: 10px 14px; gap: 10px 14px; }
+  .topbar .who { display: none; }
+  .bottombar { padding: 10px 14px; }
+}
+@media (max-width: 820px) {
+  .stage { grid-template-columns: 1fr; }
+  .stage-preview.pair { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  .lead-card .who .nm { font-size: 21px; }
+  .call-clk { font-size: 26px; }
+  .tiles { grid-template-columns: repeat(2, 1fr); }
+  .stats { width: 100%; justify-content: space-between; margin-left: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
+
+/* ---------- handset ----------
+   The manual dialer as a phone (PLAN-v2 s8): the digits and readout are set in the display face so they
+   read from arm's length, and one round button lives in one place for the whole call - green Call becomes
+   coral Hang up by rotating the handset glyph, the way a real handset is lifted and dropped. */
+.handset { position: sticky; top: 18px; min-width: 0; }
+.hs { display: grid; gap: 12px; padding: 14px 16px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-md); }
+
+.hs-last { display: grid; grid-template-columns: 36px 1fr auto; gap: 10px; align-items: center; padding: 9px 10px; border-radius: var(--radius-md); background: var(--panel-2); min-height: 54px; }
+.hs-ava { width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--line-2); background: var(--panel); display: grid; place-items: center; font-family: var(--font-ui); font-weight: 600; font-size: 12px; color: var(--ink-2); }
+.hs-ava svg { width: 16px; height: 16px; color: var(--muted); }
+.hs-lt { display: grid; text-align: left; line-height: 1.25; min-width: 0; padding: 0; border: 0; background: transparent; }
+.hs-lt b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hs-lt span { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.hs-lt:hover b { color: var(--blue-ink); }
+.hs-redial { width: 34px; height: 34px; border-radius: 50%; border: 1px solid rgba(15, 157, 110, .35); background: var(--green-dim); color: var(--green); display: grid; place-items: center; }
+.hs-redial svg { width: 16px; height: 16px; }
+.hs-redial:hover:not(:disabled) { background: var(--green); color: #fff; }
+
+.hs-num { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 10px 2px 8px; border-bottom: 1px solid var(--line); transition: border-color .12s var(--ease-out); }
+.hs-cc { position: relative; display: inline-grid; }
+.hs-cc b { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-weight: 500; font-size: 22px; letter-spacing: .01em; font-variant-numeric: tabular-nums; color: var(--ink-2); white-space: nowrap; padding: 2px 6px; border-radius: var(--radius-sm); transition: background .12s var(--ease-out); }
+.hs-cc select { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
+.hs-cc:hover b, .hs-cc:focus-within b { background: var(--panel-2); }
+.hs-digits { min-width: 0; width: 100%; border: 0; background: transparent; padding: 0; font-family: var(--font-mono); font-weight: 500; font-size: 30px; letter-spacing: .02em; font-variant-numeric: tabular-nums; color: var(--ink); }
+.hs-digits:focus { outline: none; }
+.hs-digits::placeholder { font-weight: 500; font-size: 22px; letter-spacing: 0; color: var(--line-2); }
+.hs-bs { width: 36px; height: 36px; border: 0; border-radius: 50%; background: transparent; color: var(--ink-2); display: grid; place-items: center; }
+.hs-bs svg { width: 22px; height: 22px; }
+.hs-bs:hover:not(:disabled) { background: var(--panel-2); }
+.hs-bs:disabled { opacity: .25; }
+
+.hs-keys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px 8px; }
+.hs-keys button { display: grid; justify-items: center; gap: 0; padding: 8px 0 6px; border: 0; border-radius: var(--radius-md); background: transparent; line-height: 1; transition: background .1s, transform .06s; }
+.hs-keys button:hover { background: var(--panel-2); }
+.hs-keys button:active { background: var(--line); transform: scale(.97); }
+.hs-keys span { font-family: var(--font-mono); font-weight: 500; font-size: 26px; color: var(--ink); }
+.hs-keys small { font-size: 9.5px; letter-spacing: .16em; color: var(--muted); min-height: 11px; margin-top: 1px; }
+.hs-keys.dtmf span { font-size: 24px; }
+.hs-keys.dtmf button { padding: 5px 0 4px; }
+.hs-dtmf { display: grid; gap: 4px; padding: 6px 0 0; border-top: 1px solid var(--line); }
+.hs-sent { text-align: center; font-size: 13px; color: var(--muted); min-height: 18px; letter-spacing: .12em; }
+
+.hs-action { display: grid; justify-items: center; gap: 8px; padding-top: 2px; }
+.hs-call { width: 68px; height: 68px; border-radius: 50%; border: 0; background: var(--green); color: #fff; display: grid; place-items: center; box-shadow: 0 14px 26px -12px rgba(15, 157, 110, .75); transition: background .2s, box-shadow .2s, transform .06s; }
+.hs-call svg { width: 28px; height: 28px; transition: transform .25s; }
+.hs-call:hover:not(:disabled) { background: var(--green-ink); }
+.hs-call:active:not(:disabled) { transform: translateY(1px); }
+.hs-call:disabled { opacity: 1; background: var(--line-2); box-shadow: none; }
+.hs-call.hang { background: var(--coral); box-shadow: 0 14px 26px -12px rgba(229, 72, 77, .75); }
+.hs-call.hang:hover:not(:disabled) { background: var(--coral-ink); }
+.hs-call.hang svg { transform: rotate(135deg); }
+.hs-call.ringing { animation: ringpulse 1.2s ease-in-out infinite; }
+@keyframes ringpulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(229, 72, 77, .35), 0 14px 26px -12px rgba(229, 72, 77, .75); } 50% { box-shadow: 0 0 0 12px rgba(229, 72, 77, 0), 0 14px 26px -12px rgba(229, 72, 77, .75); } }
+.hs-hint { font-size: 12.5px; color: var(--muted); text-align: center; min-height: 18px; }
+
+.hs-from { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); color: var(--ink-2); }
+.hs-from .fl { display: inline-grid; place-items: center; line-height: 1; }
+.hs-from .fl svg { width: 16px; height: 16px; color: var(--muted); }
+.hs-flag { width: 20px; height: 15px; border-radius: 2px; object-fit: cover; box-shadow: 0 0 0 1px rgba(15, 23, 42, .1); }
+.hs-flag.txt { display: inline-grid; place-items: center; font: 600 9px/1 var(--font-mono); letter-spacing: .04em; background: var(--panel-2); color: var(--ink-2); }
+.hs-from select { flex: 1; min-width: 0; border: 0; background: transparent; appearance: none; font-family: var(--font-mono); font-size: 12.5px; color: var(--ink-2); padding: 2px 18px 2px 0; cursor: pointer; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: calc(100% - 9px) 55%, calc(100% - 4px) 55%; background-size: 5px 5px; background-repeat: no-repeat; }
+
+/* in-call control rail (call-card v2): a slim horizontal bar under the lead stage. Identity, timer and
+   note live on the card, so this holds only the controls. */
+.callbar { display: grid; gap: 8px; }
+.callbar-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; box-shadow: var(--shadow-md); }
+.callbar .ctool { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line-2); background: var(--panel); border-radius: var(--radius-md); padding: 9px 14px; font-weight: 500; font-size: 13.5px; color: var(--ink-2); transition: background .12s var(--ease-out), border-color .12s var(--ease-out), color .12s var(--ease-out); }
+.callbar .ctool svg { width: 16px; height: 16px; color: var(--muted); transition: color .12s var(--ease-out); }
+.callbar .ctool:hover:not(:disabled) { background: var(--panel-2); }
+.callbar .ctool.on { background: var(--blue-dim); border-color: var(--blue-line); color: var(--blue-ink); }
+.callbar .ctool.on svg { color: var(--blue); }
+.callbar-src { font-size: 12.5px; color: var(--muted); }
+.callbar-info { display: inline-flex; align-items: baseline; gap: 8px; font-size: 14px; color: var(--ink-2); }
+.callbar-info b { font-weight: 600; }
+.callbar-info.late b { color: var(--muted); }
+.callbar .hangbtn { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--coral); background: var(--coral); color: #fff; border-radius: 999px; padding: 9px 18px; font-weight: 600; font-size: 13.5px; }
+.callbar .hangbtn svg { width: 16px; height: 16px; transform: rotate(135deg); }
+.callbar .hangbtn { transition: background .12s var(--ease-out); }
+.callbar .hangbtn:hover:not(:disabled) { background: var(--coral-ink); }
+.callbar .hangbtn.ringing { animation: ringpulse 1.2s ease-in-out infinite; }
+.callbar .hs-dtmf { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; box-shadow: var(--shadow-lg); }
+
+/* handset responsive: laptop widths keep the handset beside the card;
+   the existing 980px rule already collapses everything to one column. Appended last so it wins. */
+@media (max-width: 980px) {
+  .handset { position: static; }
+}
+
+/* ---------- shell: left nav + console ----------
+   Three tabs (Dialer / Activity / Up next), light like the rest of the console; the active one carries a
+   blue bar on the sidebar edge. The dialer is the default and comes forward on its own when a call starts. */
+.app { display: grid; grid-template-columns: 216px minmax(0, 1fr); min-height: 100vh; }
+.side { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: 4px; padding: 16px 12px; background: var(--panel); border-right: 1px solid var(--line); }
+.side .brand { display: flex; align-items: baseline; gap: 8px; padding: 4px 10px 18px; }
+.side .brand-name { font-size: 20px; }
+.nav { position: relative; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 0; border-radius: 10px; background: transparent; color: var(--ink-2); font-weight: 500; text-align: left; transition: background .12s, color .12s; }
+.nav svg { width: 18px; height: 18px; color: var(--muted); flex: none; }
+.nav:hover:not(.on) { background: var(--panel-2); color: var(--ink); }
+.nav.on { background: var(--blue-dim); color: var(--blue-ink); }
+.nav.on svg { color: var(--blue); }
+.nav.on::before { content: ''; position: absolute; left: -12px; top: 8px; bottom: 8px; width: 3px; border-radius: 0 3px 3px 0; background: var(--blue); }
+.nav b { margin-left: auto; font-family: var(--font-mono); font-weight: 500; font-size: 12px; color: var(--muted); }
+.nav.on b { color: var(--blue-ink); }
+.page { padding: 18px 22px; max-width: 960px; min-width: 0; }
+.page .panel-head { flex-wrap: wrap; }
+.feed.full { max-height: none; }
+
+/* ---------- dialer page ----------
+   The handset alone, centred; a lead card joins it on the left only while a call is live or waiting for its outcome. */
+.dialer { display: grid; grid-template-columns: 372px; justify-content: center; align-items: start; gap: 14px; padding: 24px 22px; }
+/* On a call the stage takes over: one centred column holding the stage (itself two columns) and the
+   control rail beneath it. The keypad's 372px column only applies when idle. */
+.dialer.in-call { grid-template-columns: minmax(0, 980px); }
+.dialer .err { grid-column: 1 / -1; text-align: center; margin-top: -4px; }
+
+/* tap-to-dial rows on Up next and Activity */
+.next button.lead { width: 100%; border: 0; border-top: 1px solid var(--line); background: transparent; font: inherit; color: inherit; cursor: pointer; text-align: left; transition: background .1s; }
+.next button.lead:hover { background: var(--panel-2); }
+.feed .ev { grid-template-columns: 40px 9px 1fr auto; }
+.feed .dial { width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--line-2); background: var(--panel); color: var(--green); display: grid; place-items: center; align-self: center; opacity: 0; transition: opacity .12s, background .12s; }
+.feed .dial svg { width: 13px; height: 13px; }
+.feed .ev:hover .dial, .feed .dial:focus-visible { opacity: 1; }
+.feed .dial:hover { background: var(--green); border-color: var(--green); color: #fff; }
+
+/* ---------- Auto dial / Burst dial ----------
+   A run through the rep's own queue. The one memorable thing is the tape: a tile per dial this run, in order,
+   coloured by outcome, so "three no-answers then a connect" reads at a glance. Everything else stays quiet. */
+.page.wide { max-width: 1200px; }
+.camp { display: grid; gap: 22px; }
+.camp-hero { display: grid; gap: 8px; }
+.camp-eyebrow { font-family: var(--font-ui); font-weight: 600; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--blue-ink); }
+.camp-title { font-family: var(--font-display); font-weight: 700; font-size: 44px; line-height: 1; letter-spacing: .005em; text-transform: uppercase; color: var(--ink); }
+.camp-sub { color: var(--ink-2); font-size: 15.5px; max-width: 58ch; }
+.camp-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.camp-actions .btn-lg { min-width: 200px; box-shadow: 0 10px 24px -14px rgba(30, 94, 255, .6); }
+.camp-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 18px; align-items: start; }
+.queue .nums { display: flex; gap: 26px; margin-bottom: 4px; }
+.queue .nums b { display: block; font-family: var(--font-mono); font-weight: 500; font-size: 30px; line-height: 1; font-variant-numeric: tabular-nums; }
+.queue .nums span { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.queue .next { margin-top: 8px; }
+
+.tape { display: grid; gap: 10px; }
+.tape-row { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; min-height: 22px; }
+.tile { display: inline-block; width: 18px; height: 22px; border-radius: 5px; background: var(--line-2); animation: pop .18s ease-out; }
+.tile.green { background: var(--green); } .tile.blue { background: var(--blue); } .tile.amber { background: var(--amber); } .tile.coral { background: var(--coral); } .tile.grey { background: var(--line-2); }
+.tile.now { background: transparent; border: 2px dashed var(--amber); animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pop { from { transform: scale(.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.tape-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+.tape-legend .tile { width: 9px; height: 11px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; animation: none; }
+.tape-sum { font-family: var(--font-mono); font-size: 13px; color: var(--ink-2); }
+.tape.compact { gap: 6px; }
+
+/* In a call the campaign page is one column: the run bar, then the stage, then the control rail. The
+   ringing preview (CallCard) replaces the old race chips. */
+.camp-call { display: grid; gap: 14px; align-items: start; }
+
+@media (max-width: 980px) {
+  .camp-grid { grid-template-columns: 1fr; }
+  .camp-title { font-size: 34px; }
+}
+
+/* ---------- campaign polish (audit 2026-09-07) ----------
+   One status line under the actions, the run bar as a panel, the tape-sum doubling as the legend, flat grey
+   disabled Start, 372px right column in every state, and an outcome row sized for the most-clicked buttons. */
+.camp { gap: 18px; }
+.camp-hero { gap: 8px; }
+.camp-eyebrow.muted { color: var(--muted); }
+.camp-eyebrow .lamp { margin-right: 8px; vertical-align: 1px; }
+.camp-status { min-height: 20px; margin: -8px 0 0; font-size: 13px; color: var(--muted); }
+.camp-status.err { color: var(--coral); }
+.camp-usage { margin: -10px 0 0; font-family: var(--font-mono); font-size: 12.5px; color: var(--muted); }
+.camp-actions .btn-lg:disabled { opacity: 1; background: var(--line-2); border-color: var(--line-2); color: var(--muted); box-shadow: none; }
+.camp-grid { grid-template-columns: minmax(0, 1fr) 372px; gap: 18px; }
+.queue .nums { margin-bottom: 0; }
+.queue .micro { display: block; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.queue .next { margin-top: 6px; }
+
+.tile.grey { background: var(--line-3); }
+.tape-sum { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 0; }
+.tape-sum > span { display: inline-flex; align-items: center; }
+.tape-sum > span + span::before { content: '·'; margin: 0 8px; color: var(--line-2); }
+.tape-sum .tile { width: 9px; height: 11px; border-radius: 3px; margin-right: 5px; animation: none; }
+.tape-sum .muted { margin-left: 4px; }
+.run-bar { display: grid; gap: 8px; padding: 10px 14px; }
+.run-bar .panel-head + * { margin-top: 0; }
+.run-bar .camp-status { margin: 0; }
+.btn-mini { min-height: 32px; }
+
+/* handset keypad focus */
+.hs-num:focus-within { border-bottom-color: var(--blue); }
+.hs-digits::placeholder { color: var(--muted); }
+.feed .dial { opacity: .55; }
+
+/* ---------- identity header: status chip, add-name, history summary (call-card v2) ----------
+   Who / why / relationship, pinned to the top of the card so they never sit below the outcome tiles. */
+.who-main { min-width: 0; }
+.nm-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.status-chip { display: inline-flex; align-items: center; gap: 5px; font: 600 11px/1 var(--font-ui); letter-spacing: .02em; padding: 4px 10px; border-radius: var(--radius-pill); background: var(--blue-dim); color: var(--blue-ink); white-space: nowrap; }
+.status-chip svg { width: 12px; height: 12px; }
+
+.addname { align-self: start; margin-top: 9px; background: none; border: 1px dashed var(--line-2); border-radius: var(--radius-sm); padding: 6px 11px; font-size: 12.5px; font-weight: 500; color: var(--ink-2); transition: border-color .12s var(--ease-out), color .12s var(--ease-out); }
+.addname:hover { border-color: var(--blue); color: var(--blue-ink); }
+.addname-row { display: flex; gap: 8px; margin-top: 9px; }
+.addname-row .field { flex: 1; min-height: 38px; }
+
+.hist { margin-top: 10px; display: grid; gap: 6px; }
+.hist.first { margin-top: 9px; font-size: 12.5px; color: var(--muted); }
+.hist-line { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.hist-sum { font-size: 12.5px; color: var(--ink-2); }
+.hist-sum.ok { color: var(--green-ink); font-weight: 500; }
+.hist-toggle { display: inline-flex; align-items: center; gap: 3px; background: none; border: 0; padding: 0; font: 500 12px/1 var(--font-ui); color: var(--blue-ink); white-space: nowrap; }
+.hist-toggle svg { width: 13px; height: 13px; }
+.hist-toggle:hover { text-decoration: underline; }
+.hist-sum { display: inline-flex; align-items: center; gap: 6px; }
+.hist-sum svg, .hist.first svg { width: 14px; height: 14px; color: var(--muted); flex: none; }
+.hist-note { font-size: 13px; color: var(--ink-2); font-style: italic; border-left: 2px solid var(--line-2); padding-left: 10px; line-height: 1.45; }
+.hist-list { list-style: none; margin: 2px 0 0; padding: 9px 11px; display: grid; gap: 8px; background: var(--panel-2); border-radius: var(--radius-sm); max-height: 190px; overflow: auto; }
+.hist-list .when, .hist-list .dur { font-variant-numeric: tabular-nums; }
+.hist-list li { display: grid; grid-template-columns: 54px auto auto 1fr; gap: 9px; align-items: baseline; font-size: 12.5px; min-width: 0; }
+.hist-list .when { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); }
+.hist-list .tag { font-weight: 600; white-space: nowrap; }
+.hist-list .tag.connected { color: var(--green-ink); } .hist-list .tag.later { color: var(--blue-ink); }
+.hist-list .tag.no_answer { color: var(--muted); } .hist-list .tag.invalid, .hist-list .tag.failed { color: var(--coral-ink); }
+.hist-list .dur { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); }
+.hist-list .nt { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- run: who-banner + named recent-calls log (Auto / Burst) ---------- */
+.who-banner { display: flex; align-items: center; gap: 10px; padding: 9px 13px; border-radius: var(--radius-md); background: var(--panel-2); font-size: 14px; transition: background .2s var(--ease-out); }
+.who-banner.live { background: var(--green-dim); }
+.who-banner.ringing { background: var(--amber-dim); }
+.who-banner .wb-verb { font: 600 11px/1 var(--font-ui); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); flex: none; }
+.who-banner.live .wb-verb { color: var(--green); }
+.who-banner .wb-names { color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.who-banner .wb-names b { font-weight: 600; }
+.who-banner .wb-names em { font-style: normal; color: var(--muted); margin-left: 9px; }
+.who-banner .lamp { flex: none; }
+
+.recent { list-style: none; margin: 4px 0 0; padding: 0; display: grid; }
+.recent li { display: grid; grid-template-columns: auto 9px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 7px 2px; border-top: 1px solid var(--line); font-size: 13px; }
+.recent li:first-child { border-top: 0; }
+.recent .rt-time { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+.recent .rt-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--line-3); }
+.recent .rt-dot.green { background: var(--green); } .recent .rt-dot.blue { background: var(--blue); }
+.recent .rt-dot.amber { background: var(--amber); } .recent .rt-dot.coral { background: var(--coral); } .recent .rt-dot.grey { background: var(--line-3); }
+.recent .rt-time { font-variant-numeric: tabular-nums; }
+.recent .rt-who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent .rt-who b { font-weight: 600; }
+.recent .rt-who em { font-style: normal; color: var(--muted); margin-left: 8px; }
+.recent .rt-out { color: var(--muted); font-size: 12.5px; text-align: right; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- calling console: persistent Up Next column (Auto / Burst) ---------- */
+.camp-shell { display: grid; grid-template-columns: 246px minmax(0, 1fr); gap: 18px; align-items: start; }
+.upnext-col { position: sticky; top: 18px; align-self: start; display: flex; flex-direction: column; max-height: calc(100vh - 108px); background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-sm); overflow: hidden; }
+.uc-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--line); font: 600 11px/1 var(--font-ui); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.uc-head b { font-family: var(--font-mono); font-weight: 500; letter-spacing: 0; color: var(--ink-2); }
+.uc-list { list-style: none; margin: 0; padding: 5px; display: grid; gap: 2px; overflow: auto; }
+.uc-row { width: 100%; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 10px; border: 0; border-radius: var(--radius-md); background: transparent; text-align: left; color: inherit; transition: background .12s var(--ease-out); }
+.uc-row:hover:not(:disabled) { background: var(--panel-2); }
+.uc-row:active:not(:disabled) { transform: translateY(0.5px); }
+.uc-row.on { background: var(--blue-dim); box-shadow: inset 2px 0 0 var(--blue); }
+.uc-row:disabled { cursor: default; }
+.uc-ava { width: 30px; height: 30px; border-radius: var(--radius-sm); background: var(--panel-2); color: var(--ink-2); display: grid; place-items: center; font: 600 11.5px/1 var(--font-ui); }
+.uc-ava svg { width: 15px; height: 15px; }
+.uc-row.on .uc-ava { background: var(--blue); color: #fff; }
+.uc-main { min-width: 0; display: grid; }
+.uc-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.uc-num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.uc-lt { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 11.5px; color: var(--muted); align-self: start; padding-top: 2px; }
+.upnext-col .empty { padding: 16px; }
+
+.stage.preview { margin: 2px 0 4px; }
+.stage.preview .call-status .eyebrow { color: var(--blue-ink); }
+
+/* ---------- editable contact panel (call-card v2, JustCall parity) ---------- */
+.lead-panel { display: grid; gap: 0; align-content: start; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+.lp-time { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 56px; padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 13.5px; color: var(--ink-2); }
+.lp-time b { font-weight: 600; color: var(--ink); }
+.lp-time svg { width: 15px; height: 15px; color: var(--muted); }
+.lp-time .tbar { width: 64px; margin-left: auto; }
+.lp-fields { display: grid; }
+.lp-row { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 10px; align-items: center; padding: 2px 16px; border-top: 1px solid var(--line); min-height: 42px; }
+.lp-row:first-child { border-top: 0; }
+.lp-row.editing { background: var(--panel-2); }
+.lp-label { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); }
+.lp-label svg { width: 15px; height: 15px; color: var(--muted); }
+.lp-value { justify-self: stretch; text-align: left; background: none; border: 0; padding: 8px; margin: 0 -8px; border-radius: var(--radius-sm); font: inherit; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: background .1s var(--ease-out); }
+.lp-value:hover { background: var(--panel-2); }
+.lp-value.empty { color: var(--muted); font-style: italic; }
+.lp-value a { display: inline-flex; align-items: center; gap: 4px; color: var(--blue-ink); text-decoration: none; }
+.lp-value a:hover { text-decoration: underline; }
+.lp-value a svg { width: 12px; height: 12px; }
+.lp-edit { display: grid; gap: 6px; }
+.lp-input { min-height: 38px; padding: 8px 10px; }
+.lp-edit .keyhint { padding-left: 1px; }
+.lp-hint-sep { color: var(--line-2); }
+.lp-saved { display: inline-flex; color: var(--green); font-style: normal; margin-left: 8px; animation: tickin .16s var(--ease-out); }
+.lp-saved svg { width: 14px; height: 14px; }
+@keyframes tickin { from { opacity: 0; transform: translateY(1px); } to { opacity: 1; transform: none; } }
+.lp-more { padding: 11px 16px; border-top: 1px solid var(--line); }
+.lp-more .kv.more { margin-top: 9px; border-top: 0; padding-top: 0; }
+
+@media (max-width: 1080px) {
+  .camp-shell { grid-template-columns: 1fr; }
+  .upnext-col { position: static; max-height: 280px; order: 2; }
+}
+
+/* The HubSpot inlet strip on Up next (docs/HUBSPOT-QUEUE.md). One line: is the second inlet on, is it
+   working, how fresh. Per-contact rejects stay in the server log by owner's decision — a broken inlet
+   is a different thing and turns this coral, because it must never look like an empty queue.
+   Named .inlet, NOT .hs: .hs is the handset panel above (line ~304) and a second .hs rule this far
+   down the file wins on source order, which flattened the whole dialer into one row. */
+.inlet { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; padding: 8px 12px;
+         border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-2); }
+.inlet-t { flex: 1; min-width: 0; font-size: 13px; color: var(--ink-2); }
+.inlet .btn-mini { flex: none; }
+.inlet.bad { border-color: var(--coral-line); background: var(--coral-dim); }
+.inlet.bad .inlet-t { color: var(--coral-ink); }
+
+/* Up next, grouped by when each lead opens (docs/HUBSPOT-QUEUE.md s12). Rows reuse .next .lead as-is;
+   only the summary line and the group heads are new. Prefixed un- (see the .hs note above). */
+.un-sum { margin: 0 0 12px; font-size: 13px; color: var(--ink-2); line-height: 1.45; }
+.un-group + .un-group { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.un-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; min-width: 0;
+           font-size: 11.5px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); font-weight: 600; }
+.un-head b { font-family: var(--font-mono); font-weight: 500; color: var(--ink-2); letter-spacing: 0; text-transform: none; }
+.un-head em { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+              font-style: normal; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--muted); }
+.un-head.due { color: var(--green-ink); }
+.un-group .empty { margin: 0; }
+.un-more { margin-top: 6px; }
+
+:root{--font-hanken:'Hanken Grotesk';--font-saira:'Saira Semi Condensed';--font-plex-mono:'IBM Plex Mono'}</style></head><body><div class="app"><nav class="side" aria-label="Main"><div class="brand"><span class="brand-name">Eazybe</span><span class="brand-sub">dialer</span></div><button class="nav"><svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor" stroke="none" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="6" cy="6" r="1.6"></circle><circle cx="12" cy="6" r="1.6"></circle><circle cx="18" cy="6" r="1.6"></circle><circle cx="6" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="18" cy="12" r="1.6"></circle><circle cx="6" cy="18" r="1.6"></circle><circle cx="12" cy="18" r="1.6"></circle><circle cx="18" cy="18" r="1.6"></circle></svg><span>Dialer</span></button><button class="nav on" aria-current="page"><svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor" stroke="none" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 5.3v13.4a1 1 0 0 0 1.54.84l10.3-6.7a1 1 0 0 0 0-1.68L8.54 4.46A1 1 0 0 0 7 5.3z"></path></svg><span>Auto dial</span></button><button class="nav"><svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m12 2 9 5-9 5-9-5 9-5z"></path><path d="m3 12 9 5 9-5M3 17l9 5 9-5"></path></svg><span>Burst dial</span></button><button class="nav"><svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg><span>Activity</span></button><button class="nav"><svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"></path></svg><span>Up next</span><b>64</b></button></nav><div class="console"><header class="topbar"><div class="audio" role="status"><span class="lamp green" aria-hidden="true"></span><span>Audio on</span><button class="btn btn-ghost" title="Disconnect audio">Disconnect</button></div><div class="stats" aria-label="Today"><div class="stat"><b>42</b><span>dialed</span></div><div class="stat"><b class="green">12</b><span>connected</span></div><div class="stat"><b>29%</b><span>rate</span></div><div class="stat"><b>64</b><span>in queue</span></div></div><button class="btn btn-ghost who" title="Sign out"><svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"></path></svg><span>maya.rep@example.com</span></button></header><div class="page wide"><div class="camp-shell"><aside class="upnext-col" aria-label="Up next"><div class="uc-head"><span>Up next</span><b>64</b></div><ol class="uc-list"><li><button class="uc-row on" aria-current="true"><span class="uc-ava" aria-hidden="true">MP</span><span class="uc-main"><span class="uc-name">Maya Patel</span><span class="uc-num mono">+44 20794 60000</span></span><span class="uc-lt">10:10</span></button></li><li><button class="uc-row" aria-current="false"><span class="uc-ava" aria-hidden="true">OG</span><span class="uc-main"><span class="uc-name">Oliver Grant</span><span class="uc-num mono">+44 20794 60001</span></span><span class="uc-lt">10:10</span></button></li><li><button class="uc-row" aria-current="false"><span class="uc-ava" aria-hidden="true">SB</span><span class="uc-main"><span class="uc-name">Sophie Bennett</span><span class="uc-num mono">+44 20794 60002</span></span><span class="uc-lt">10:10</span></button></li><li><button class="uc-row" aria-current="false"><span class="uc-ava" aria-hidden="true">AM</span><span class="uc-main"><span class="uc-name">Alex Morgan</span><span class="uc-num mono">+44 20794 60003</span></span><span class="uc-lt">10:10</span></button></li><li><button class="uc-row" aria-current="false"><span class="uc-ava" aria-hidden="true">PS</span><span class="uc-main"><span class="uc-name">Priya Shah</span><span class="uc-num mono">+44 20794 60004</span></span><span class="uc-lt">10:10</span></button></li><li><button class="uc-row" aria-current="false"><span class="uc-ava" aria-hidden="true">JE</span><span class="uc-main"><span class="uc-name">James Ellis</span><span class="uc-num mono">+44 20794 60005</span></span><span class="uc-lt">10:10</span></button></li></ol></aside><div class="camp running"><span class="camp-eyebrow"><i class="lamp blue" aria-hidden="true"></i>Run paused · Auto dial · since 14:15</span><div class="camp-actions"><button class="btn btn-blue btn-lg"><svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>Next lead<kbd>Enter</kbd></button><button class="btn">Stop run</button><input type="file" accept=".csv" hidden=""/><button class="btn btn-ghost"><svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 15V3m-5 5 5-5 5 5M20 17v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2"></path></svg>Upload CSV</button></div><p class="camp-status" role="status">Next: Maya Patel · 10:10 their time · attempt 3, last no answer</p><div class="stage preview"><section class="lead-card"><div class="call-status"><span class="eyebrow">Up next — review or fix before you dial</span></div><div class="who"><span class="ava" aria-hidden="true">MP</span><div class="who-main"><div class="nm-row"><div class="nm">Maya Patel</div><span class="status-chip">Demo requested</span></div><div class="role">Revenue Operations Lead · Northstar Commerce</div><div class="idline"><span class="num mono">+44 20794 60000</span><span>attempt 3</span></div><div class="hist"><div class="hist-line"><span class="hist-sum"><svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3.5 9A9 9 0 1 1 3 13.5"></path><path d="M3 4v5h5M12 8v4.5l3 1.8"></path></svg>2 previous calls · last no answer, 20 h ago · never connected</span><button class="hist-toggle" aria-expanded="false">Show history<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m9 6 6 6-6 6"></path></svg></button></div></div></div></div></section><aside class="lead-panel" aria-label="Contact details"><header class="lp-time"><svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg><b>It’s 10:10 there</b><span> · United Kingdom</span><span class="tbar in" title="10:10 their time — inside calling hours (10:00–19:00)" aria-label="10:10 their time — inside calling hours (10:00–19:00)" role="img"><span class="win"></span><span class="now" style="left:42.36111111111111%"></span></span></header><div class="lp-fields"><div class="lp-row"><span class="lp-label"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>Name</span><button class="lp-value" title="Click to edit">Maya Patel</button></div><div class="lp-row"><span class="lp-label"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="5" y="3" width="14" height="18" rx="1.5"></rect><path d="M9 8h.01M15 8h.01M9 12h.01M15 12h.01M10 21v-3a2 2 0 0 1 4 0v3"></path></svg>Company</span><button class="lp-value" title="Click to edit">Northstar Commerce</button></div><div class="lp-row"><span class="lp-label"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="2.5" y="7" width="19" height="13" rx="2"></rect><path d="M8 7V5.5A1.5 1.5 0 0 1 9.5 4h5A1.5 1.5 0 0 1 16 5.5V7M2.5 12.5h19"></path></svg>Job title</span><button class="lp-value" title="Click to edit">Revenue Operations Lead</button></div><div class="lp-row"><span class="lp-label"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="2.5" y="4.5" width="19" height="15" rx="2"></rect><path d="m3 6 9 6 9-6"></path></svg>Email</span><button class="lp-value" title="Click to edit"><a href="mailto:maya.patel@example.com" target="_blank" rel="noreferrer">maya.patel@example.com</a></button></div><div class="lp-row"><span class="lp-label"><svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" stroke="none" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4.98 3.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5zM3.2 9.25h3.56V21H3.2zM9.4 9.25h3.41v1.6h.05c.47-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.46V21h-3.56v-5.24c0-1.25-.02-2.86-1.74-2.86-1.75 0-2.01 1.36-2.01 2.77V21H9.4z"></path></svg>LinkedIn</span><button class="lp-value empty" title="Click to edit">Add</button></div><div class="lp-row"><span class="lp-label"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12.6 2.6A2 2 0 0 0 11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2 2 0 0 0 2.83 0l6.57-6.57a2 2 0 0 0 0-2.83z"></path><circle cx="7" cy="7" r="1.3" fill="currentColor" stroke="none"></circle></svg>Lead source</span><button class="lp-value" title="Click to edit">Demo requested</button></div><div class="lp-row"><span class="lp-label"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.1 9.9a16 16 0 0 0 6 6l1.26-1.26a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>Alternate 1</span><button class="lp-value empty" title="Click to edit">Add (+country code)</button></div><div class="lp-row"><span class="lp-label"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.1 9.9a16 16 0 0 0 6 6l1.26-1.26a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>Alternate 2</span><button class="lp-value empty" title="Click to edit">Add (+country code)</button></div></div></aside></div><div class="camp-grid"><section class="panel"><div class="panel-head"><h2 class="panel-title">This run<b>since 14:15</b></h2></div><div class="tape"><div class="tape-row" aria-label="Calls this run"><span class="tile grey" title="Liam Foster · No answer"></span><span class="tile green" title="Emma Wilson · Interested"></span><span class="tile grey" title="Noah Hughes · No answer"></span><span class="tile blue" title="Isabella Reed · Callback requested"></span></div><div class="tape-sum"><span>This run</span><span><i class="tile green"></i>1 connected</span><span><i class="tile grey"></i>2 no answer</span><span><i class="tile blue"></i>1 call later</span><span>18 ready</span></div></div><ol class="recent" aria-label="Calls this run"><li><span class="rt-time">14:37</span><i class="rt-dot blue" aria-hidden="true"></i><span class="rt-who"><b>Isabella Reed</b><em>Aster Co.</em></span><span class="rt-out">Callback requested</span></li><li><span class="rt-time">14:34</span><i class="rt-dot grey" aria-hidden="true"></i><span class="rt-who"><b>Noah Hughes</b><em>Vista Labs</em></span><span class="rt-out">No answer</span></li><li><span class="rt-time">14:31</span><i class="rt-dot green" aria-hidden="true"></i><span class="rt-who"><b>Emma Wilson</b><em>Orbit Retail</em></span><span class="rt-out">Interested</span></li><li><span class="rt-time">14:28</span><i class="rt-dot grey" aria-hidden="true"></i><span class="rt-who"><b>Liam Foster</b><em>Elm Systems</em></span><span class="rt-out">No answer</span></li></ol></section><section class="panel queue"><div class="panel-head"><h2 class="panel-title">Your queue<b>64 in queue</b></h2></div><div class="nums"><div><b>18</b><span>ready now</span></div></div></section></div></div></div></div></div><audio id="remoteMedia" autoPlay=""></audio></div></body></html>
