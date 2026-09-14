@@ -4,7 +4,8 @@
 // so the CSV inlet keeps working untouched until the token exists.
 import { q } from '../db/pool.js';
 import { resolveLead, segmentFor } from './countries.js';
-import { normalizePhone, upsertLead, looksLikePhone } from './import.js';
+import { normalizePhone, looksLikePhone } from './import.js';
+import { reconcileLead } from './hubspotReconcile.js';
 import { emitToUser } from '../io.js';
 
 const BASE = 'https://api.hubapi.com';
@@ -39,7 +40,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export async function hs(path, init = {}) {
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(BASE + path, {
-      ...init,
+      signal: AbortSignal.timeout(15000), ...init,
       headers: { authorization: 'Bearer ' + token(), 'content-type': 'application/json', ...init.headers },
     });
     if (res.status === 429 && attempt < 3) { await sleep(1000 * (attempt + 1)); continue; }
@@ -54,7 +55,7 @@ export async function hs(path, init = {}) {
 
 /** hs() for a multipart body (file upload): fetch must set the boundary header itself. */
 export async function hsRaw(path, init = {}) {
-  const res = await fetch(BASE + path, { ...init, headers: { authorization: 'Bearer ' + token(), ...init.headers } });
+  const res = await fetch(BASE + path, { signal: AbortSignal.timeout(30000), ...init, headers: { authorization: 'Bearer ' + token(), ...init.headers } });
   if (res.ok) return res.json();
   const body = await res.text().catch(() => '');
   const err = new Error(`HubSpot ${res.status} on ${path}: ${body.slice(0, 300)}`); err.status = res.status; err.body = body;
@@ -205,7 +206,6 @@ async function ticked(user, props) {
 
 // --- the pull ---------------------------------------------------------------------------------
 
-const FINISHED = new Set(['connected', 'exhausted', 'stopped']);
 const EMPTY = { added: 0, resumed: 0, reopened: 0, removed: 0, skipped: 0, refreshed: 0 };
 
 async function doPull(user) {
@@ -241,61 +241,10 @@ async function doPull(user) {
     leads.push(lead);
   }
 
-  const ids = leads.map((l) => l.id);
-  const { rows: existing } = ids.length
-    ? await q(`SELECT hubspot_contact_id AS hs, id, status, stopped_reason AS reason, hubspot_seen_at AS seen,
-                      utc_offset IS NULL AS "noTimezone", name IS NULL AS "noName"
-               FROM leads WHERE hubspot_contact_id = ANY($1)`, [ids])
-    : { rows: [] };
-  const byId = new Map(existing.map((e) => [e.hs, e]));
-
-  const stamp = [];    // already here and unchanged: one bulk touch, nothing else
-  const reopen = [];   // finished, and absent from the previous pull -> unticked and re-ticked
-  const resume = [];   // we stopped it on an untick and it is ticked again -> put it back as it was
-  const fresh = [];    // no lead row yet, or here but still with no timezone
-
   for (const lead of leads) {
-    const ex = byId.get(lead.id);
-    if (!ex) { fresh.push(lead); continue; }
-    // A lead with no timezone is in the queue but can never be due (queue.js needs utc_offset), and
-    // with rejects silent the rep would never learn why. It is the one case worth re-reading every
-    // poll: fill the country in HubSpot and the lead starts dialing on its own. The other: a lead born
-    // thin (the keypad, a CSV with no name) whose contact does carry a name - re-read once, and the
-    // card fills in; a contact with no name in HubSpot either stays on the cheap path.
-    if (ex.noTimezone || (ex.noName && lead.name)) { fresh.push(lead); continue; }
-    stamp.push(lead.id);
-    if (ex.status === 'stopped' && String(ex.reason ?? '').startsWith('hubspot_untick')) resume.push(ex);
-    // A finished lead comes back when the tick is new: either it was absent from the previous pull
-    // (untick + re-tick), or it has never been seen ticked at all - a CSV lead that carried a Record
-    // ID and was connected weeks ago. The rep ticked it because they want to call it again.
-    else if (FINISHED.has(ex.status) && (ex.seen == null || (trustAbsence && new Date(ex.seen) < prev))) reopen.push(ex.id);
-  }
-
-  // Steady state is these two statements and nothing more: a rep whose queue has not changed costs
-  // one search and one UPDATE. Fields of a lead already queued are deliberately not refreshed
-  // (docs/HUBSPOT-QUEUE.md s4) - untick and re-tick is how a rep asks for a re-read. A ticked lead
-  // is HubSpot-governed from here on whichever inlet brought it, so the untick sweep can remove it.
-  if (stamp.length) await q(`UPDATE leads SET hubspot_seen_at = $2, source = 'hubspot' WHERE hubspot_contact_id = ANY($1)`, [stamp, startedAt]);
-
-  for (const lead of fresh) {
-    const row = await upsertLead({ ...lead, userId: user.id, seenAt: startedAt });
-    if (row.inserted) r.added++; else r.refreshed++;
-  }
-
-  if (reopen.length) {
-    const { rowCount } = await q(
-      `UPDATE leads SET status = 'queued', attempt_count = 0, number_attempts = 0, phone_idx = 1,
-              phone = coalesce(phones[1], phone), next_call_at = now(), stopped_reason = NULL
-       WHERE id = ANY($1)`, [reopen]);
-    r.reopened = rowCount;
-  }
-  // Back to exactly what it was before the untick: a booked callback stays a callback (a 'later' lead
-  // skips the window rules deliberately), a queued lead keeps its attempts and its next_call_at.
-  for (const group of [['hubspot_untick', 'queued'], ['hubspot_untick_later', 'later']]) {
-    const rows = resume.filter((e) => e.reason === group[0]).map((e) => e.id);
-    if (!rows.length) continue;
-    const { rowCount } = await q(`UPDATE leads SET status = $2, stopped_reason = NULL WHERE id = ANY($1)`, [rows, group[1]]);
-    r.resumed += rowCount;
+    const result = await reconcileLead(lead, user.id, startedAt, prev, trustAbsence);
+    if (result.action) r[result.action]++;
+    if (result.previousOwner) emitToUser(result.previousOwner, 'queue:changed', {});
   }
 
   // Unticked: gone from the queue. Only leads whose last inlet was HubSpot, never one that is on a
@@ -314,7 +263,7 @@ async function doPull(user) {
   const result = { ...r, syncedAt: startedAt, ticked: leads.length };
   // Something moved: remember it (survives a redeploy) and tell the rep's open tabs right now, so a tick
   // in HubSpot shows up on Up next without waiting for the minute poll.
-  if (r.added + r.resumed + r.reopened + r.removed > 0) {
+  if (r.added + r.resumed + r.reopened + r.removed + r.refreshed > 0) {
     const change = { at: startedAt, ...result };
     await q('UPDATE users SET hubspot_last_change = $2 WHERE id = $1', [user.id, JSON.stringify(change)]);
     emitToUser(user.id, 'queue:synced', change);

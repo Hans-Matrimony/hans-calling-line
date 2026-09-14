@@ -2,7 +2,7 @@
 // throwaway `scratch` schema with Telnyx and HubSpot stubbed at the fetch layer. Places no calls,
 // needs no tokens. Usage (from server/):
 //   node scripts/admin-test.mjs
-import 'dotenv/config';
+if (process.env.EAZYBE_TEST_DATABASE !== 'isolated') throw new Error('Run npm test from server/ to use the disposable database.');
 import { readFileSync } from 'node:fs';
 
 const base = process.env.DATABASE_URL;
@@ -42,7 +42,7 @@ globalThis.fetch = async (url, init = {}) => {
 const { pool, q } = await import('../src/db/pool.js');
 const { onCallCost, balance } = await import('../src/lib/costs.js');
 const { startLeadRecording, onRecordingSaved, onRecordingError, recordingUrl } = await import('../src/lib/recordings.js');
-const { logCall, attachRecording } = await import('../src/lib/hubspotCalls.js');
+const { logCall, attachRecording, processCallSync } = await import('../src/lib/hubspotCalls.js');
 const hubspot = await import('../src/lib/hubspot.js');
 const m = await import('../src/lib/metrics.js');
 const { setSetting } = await import('../src/lib/settings.js');
@@ -96,7 +96,7 @@ await startLeadRecording(C1, 'cc-1', { kind: 'lead', userId: rep.id, burstId: 1,
 let r = await row(C1);
 ok('record_start called, status started, token minted', [calls.recordStart, r.recording_status, /^[0-9a-f]{32}$/.test(r.recording_token)], [1, 'started', true]);
 await onRecordingSaved({ call_leg_id: 'leg-1', call_session_id: 'sess-1', recording_started_at: '2026-09-09T10:00:21Z', recording_ended_at: '2026-09-09T10:01:50Z', recording_urls: { mp3: 'https://expires.test/x' } }, { kind: 'lead', userId: rep.id, callId: C1 });
-await sleep(400); // the attach runs in the background
+await processCallSync(C1); // drain the durable job, as the background worker does
 r = await row(C1);
 ok('recording.saved: saved, leg id kept, expiring url not stored', [r.recording_status, r.recording_leg_id, r.recording_id], ['saved', 'leg-1', 'rec-1']);
 ok('...and the file was copied into HubSpot Files', [calls.hsFiles, r.hubspot_file_url], [1, 'https://f.hubspotusercontent.net/rec.mp3']);
@@ -119,9 +119,9 @@ r = await row(C1);
 const posted = calls.hsCallPost[0];
 ok('engagement created and remembered', [r.hubspot_call_id, calls.hsCallPost.length], ['hscall-1', 1]);
 ok('associated to the contact, call_to_contact', posted.associations[0], { to: { id: '101' }, types: [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 194 }] });
-ok('the fields CallHippo pushes', [posted.properties.hs_call_direction, posted.properties.hs_call_status, posted.properties.hs_call_duration, posted.properties.hs_call_disposition, posted.properties.hs_activity_type, posted.properties.hs_call_body, posted.properties.hubspot_owner_id],
+ok('the fields CallHippo pushes', [posted.properties.hs_call_direction, posted.properties.hs_call_status, posted.properties.hs_call_duration, posted.properties.hs_call_disposition, posted.properties.hs_activity_type, posted.properties.hs_call_body.split(' · Eazybe call reference: ')[0], posted.properties.hubspot_owner_id],
   ['OUTBOUND', 'COMPLETED', '90000', 'guid-connected', 'Interested', 'Interested · wants a demo', '94828863']);
-ok('recording link is the HubSpot Files copy', posted.properties.hs_call_recording_url, 'https://f.hubspotusercontent.net/rec.mp3');
+ok('recording link is updated to the HubSpot Files copy', calls.hsCallPatch.at(-1).body.properties.hs_call_recording_url, 'https://f.hubspotusercontent.net/rec.mp3');
 await logCall(C1);
 ok('logging twice is a no-op', calls.hsCallPost.length, 1);
 
@@ -170,7 +170,7 @@ const patchesBefore = calls.hsCallPatch.length;
 await logCall(C7);
 const upd = calls.hsCallPatch.at(-1);
 ok('the outcome later updates that same activity, no second one',
-  [calls.hsCallPost.length - postsBefore, calls.hsCallPatch.length - patchesBefore, upd?.body?.properties?.hs_call_disposition, upd?.body?.properties?.hs_activity_type, upd?.body?.properties?.hs_call_body],
+  [calls.hsCallPost.length - postsBefore, calls.hsCallPatch.length - patchesBefore, upd?.body?.properties?.hs_call_disposition, upd?.body?.properties?.hs_activity_type, upd?.body?.properties?.hs_call_body?.split(' · Eazybe call reference: ')[0]],
   [1, 1, 'guid-connected', 'Interested', 'Interested · came back to it']);
 const stillRinging = await call(L1, 'cc-7c', '2026-09-09T17:30:00Z', {}); // never answered, no outcome
 await logCall(stillRinging);

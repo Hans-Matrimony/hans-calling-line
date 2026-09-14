@@ -2,7 +2,7 @@
 // `scratch` schema, with HubSpot itself stubbed at the fetch layer. Places no calls and needs no
 // HUBSPOT_TOKEN. Usage (from server/):
 //   node scripts/hubspot-test.mjs
-import 'dotenv/config';
+if (process.env.EAZYBE_TEST_DATABASE !== 'isolated') throw new Error('Run npm test from server/ to use the disposable database.');
 import { readFileSync } from 'node:fs';
 
 const base = process.env.DATABASE_URL;
@@ -105,7 +105,7 @@ await releaseLead((await q(`SELECT id FROM leads WHERE hubspot_contact_id = '101
 CONTACTS[0].properties.firstname = 'Renamed In HubSpot';
 ok('still ticked: nothing moves', counts(await hubspot.pullQueue(uid)), { added: 0, resumed: 0, reopened: 0, removed: 0, skipped: 1 });
 const held = await lead('101');
-ok('attempts kept, fields deliberately not refreshed', [held.attempt_count, held.name], [1, 'L. Corcoran']);
+ok('attempts kept while current CRM fields refresh', [held.attempt_count, held.name], [1, 'Renamed In HubSpot Corcoran']);
 
 // --- 4. untick removes it, re-tick puts it back exactly as it was ------------------------------
 CONTACTS[0].properties.eazybe_dial_queue = 'false';
@@ -226,7 +226,7 @@ await thin('112', '+441632960099');
 await thin('113', '+441632960098');
 CONTACTS.push(contact('112', { firstname: 'Naveen', lastname: 'Mohan', phone: '+441632960099', country: 'United Kingdom', company: 'Acme' }));
 CONTACTS.push(contact('113', { phone: '+441632960098', country: 'United Kingdom' }));
-ok('the named one is re-read, the nameless one is only stamped', (await hubspot.pullQueue(uid)).refreshed, 1);
+ok('both contacts refresh changed CRM fields, including a nameless contact', (await hubspot.pullQueue(uid)).refreshed, 2);
 const named = await lead('112');
 ok('name, country and card fields land; attempts and status kept',
   [named.name, named.country, named.extra.company, named.attempt_count, named.status, named.source], ['Naveen Mohan', 'United Kingdom', 'Acme', 2, 'queued', 'hubspot']);

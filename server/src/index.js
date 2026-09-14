@@ -10,7 +10,8 @@ import { setIo } from './io.js';
 import { router as auth, userIdFromCookieHeader } from './auth.js';
 import { router as leads } from './routes/leads.js';
 import { router as session } from './routes/session.js';
-import { router as webhooks } from './routes/webhooks.js';
+import { router as webhooks, startWebhookWorker } from './routes/webhooks.js';
+import { startCallSyncWorker } from './lib/hubspotCalls.js';
 import { router as admin } from './routes/admin.js';
 import { router as rec } from './routes/rec.js';
 import { q } from './db/pool.js';
@@ -65,5 +66,7 @@ const port = Number(process.env.PORT ?? 3001);
 server.listen(port, () => {
   console.log(`dialer server on :${port}  webhooks -> ${process.env.PUBLIC_URL || '(PUBLIC_URL unset)'}/webhooks/telnyx`);
   startPolling(); // HubSpot inlet; a no-op until HUBSPOT_TOKEN is set
+  startWebhookWorker();
+  startCallSyncWorker();
   ensureCues().catch((e) => console.warn('cues', e.message)); // rep-leg cues into Telnyx media storage; by URL until then
 });

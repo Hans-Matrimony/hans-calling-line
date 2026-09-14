@@ -31,7 +31,7 @@ export const looksLikePhone = (s) => /^[\d\s+()-]+$/.test(String(s ?? '').trim()
  *  keeps its attempts, its history and the number it has rolled onto instead of becoming a second lead
  *  we would dial in parallel. Matched on email first, then on any shared number.
  */
-async function adoptProvisionalKey(userId, id, email, phones) {
+export async function adoptProvisionalKey(userId, id, email, phones) {
   if (!id || id.startsWith('email-') || id.startsWith('manual-')) return;
   const mail = String(email ?? '').toLowerCase();
   const { rows: [prev] } = await q(
@@ -39,7 +39,7 @@ async function adoptProvisionalKey(userId, id, email, phones) {
      WHERE user_id = $1 AND hubspot_contact_id <> $2
        AND (hubspot_contact_id LIKE 'email-%' OR hubspot_contact_id LIKE 'manual-%')
        AND (($3 <> '' AND lower(extra->>'email') = $3) OR phones && $4::text[])
-     ORDER BY ($3 <> '' AND lower(extra->>'email') = $3) DESC, id LIMIT 1`,
+     ORDER BY ($3 <> '' AND lower(extra->>'email') = $3) DESC, id LIMIT 1 FOR UPDATE`,
     [userId, id, mail, phones]);
   if (!prev) return;
   // If a row already sits under the real id (the contact was imported twice, once each way) the
@@ -64,11 +64,11 @@ async function adoptProvisionalKey(userId, id, email, phones) {
 export async function upsertLead({ userId, id, name, phones, country, utcOffset, segment, extra, source, seenAt = null }) {
   await adoptProvisionalKey(userId, id, extra?.email, phones);
   const { rows: [r] } = await q(
-    `INSERT INTO leads (hubspot_contact_id, name, phone, phones, country, utc_offset, segment, extra, user_id, source, hubspot_seen_at)
-     VALUES ($1, $2, $3, $9, $4, $5, $6, $7, $8, $10, $11)
+    `INSERT INTO leads (hubspot_contact_id, name, phone, phones, country, utc_offset, segment, extra, user_id, source, hubspot_seen_at, timezone)
+     VALUES ($1, $2, $3, $9, $4, $5, $6, $7, $8, $10, $11, $12)
      ON CONFLICT (hubspot_contact_id) DO UPDATE
        SET name = coalesce(EXCLUDED.name, leads.name), country = coalesce(EXCLUDED.country, leads.country),
-           utc_offset = coalesce(EXCLUDED.utc_offset, leads.utc_offset), segment = EXCLUDED.segment,
+           utc_offset = coalesce(EXCLUDED.utc_offset, leads.utc_offset), timezone = coalesce(EXCLUDED.timezone, leads.timezone), segment = EXCLUDED.segment,
            extra = leads.extra || EXCLUDED.extra, user_id = EXCLUDED.user_id, source = EXCLUDED.source,
            hubspot_seen_at = coalesce(EXCLUDED.hubspot_seen_at, leads.hubspot_seen_at),
            phones = EXCLUDED.phones,
@@ -79,7 +79,7 @@ export async function upsertLead({ userId, id, name, phones, country, utcOffset,
            phone = coalesce(EXCLUDED.phones[array_position(EXCLUDED.phones, leads.phone)], EXCLUDED.phone)
      RETURNING id, (xmax = 0) AS inserted, status`,
     [id, name || null, phones[0], country || null, utcOffset ?? null, segment,
-     JSON.stringify(extra ?? {}), userId, phones, source, seenAt]);
+     JSON.stringify(extra ?? {}), userId, phones, source, seenAt, resolveLead({ country, phone: phones[0] })?.timezone ?? null]);
   return r;
 }
 

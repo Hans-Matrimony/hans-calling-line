@@ -3,7 +3,8 @@
 // again and a public token to serve it. Recording must never touch the call: every path here
 // swallows its own errors.
 import { randomBytes } from 'node:crypto';
-import { q } from '../db/pool.js';
+import { q, transaction } from '../db/pool.js';
+import { queueCallSync } from './hubspotJobs.js';
 import { pokeAdmins } from '../io.js';
 import { telnyx, startRecording, encodeState } from '../telnyx.js';
 import { RECORD_CALLS, RECORD_BEEP } from '../config.js';
@@ -32,17 +33,18 @@ const handle = (p, state) =>
 export async function onRecordingSaved(p, state) {
   const [where, key] = handle(p, state);
   if (!where) { console.warn('recording.saved: nothing to attach it to', p?.call_leg_id); return; }
-  const { rows: [c] } = await q(
-    `UPDATE calls SET recording_status = 'saved', recording_leg_id = $2, recording_session_id = $3,
-       recording_started_at = $4, recording_ended_at = $5, recording_error = NULL,
-       recording_token = coalesce(recording_token, $6)
-     WHERE ${where} RETURNING id`,
-    [key, p.call_leg_id ?? null, p.call_session_id ?? null, p.recording_started_at ?? null, p.recording_ended_at ?? null,
-     randomBytes(16).toString('hex')]);
-  if (!c) return;
+  await transaction(async () => {
+    const { rows: [c] } = await q(
+      `UPDATE calls SET recording_status = 'saved', recording_leg_id = $2, recording_session_id = $3,
+         recording_started_at = $4, recording_ended_at = $5, recording_error = NULL,
+         recording_token = coalesce(recording_token, $6)
+       WHERE ${where} RETURNING id`,
+      [key, p.call_leg_id ?? null, p.call_session_id ?? null, p.recording_started_at ?? null, p.recording_ended_at ?? null,
+       randomBytes(16).toString('hex')]);
+    if (!c) throw new Error('recording call has not been saved yet');
+    await queueCallSync(c.id);
+  });
   pokeAdmins('recording');
-  const { attachRecording } = await import('./hubspotCalls.js');
-  attachRecording(c.id).catch((e) => console.warn('hubspot recording attach', e.message));
 }
 
 export async function onRecordingError(p, state) {

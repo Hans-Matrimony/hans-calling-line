@@ -1,8 +1,9 @@
 import express from 'express';
 import { requireAuth } from '../auth.js';
-import { q } from '../db/pool.js';
+import { q, transaction } from '../db/pool.js';
 import { emitToUser, pokeAdmins } from '../io.js';
-import { logCall } from '../lib/hubspotCalls.js';
+import { queueCallSync } from '../lib/hubspotJobs.js';
+import { snapshot, reserveBurst } from '../lib/sessionState.js';
 import { repUp, activeBurst } from '../state.js';
 import { claimLeads, claimManual, releaseLead, pickFromNumber, sweepStuckLeads, listFromNumbers } from '../lib/queue.js';
 import { normalizePhone } from '../lib/import.js';
@@ -23,41 +24,9 @@ const MSG = {
   noHangup: 'No call to hang up.',
 };
 
-/** What the rep's screen should show right now, rebuilt from the DB so a reload, a tab switch or a server
- *  restart never strands a call: the ringing legs, or the lead card + timer while live or waiting for its
- *  outcome. A call answered but never dispositioned (tab closed mid-call) comes back as 'ended'. */
-async function snapshot(userId) {
-  const idle = { burstId: null, phase: 'idle', legs: [], card: null, answeredAt: null, duration: null };
-  const burstId = activeBurst.get(userId);
-  if (burstId) {
-    const { rows } = await q(
-      `SELECT c.id, c.lead_id AS "leadId", c.answered_at AS "answeredAt", c.duration, c.disposition, c.from_number AS "from",
-              l.id, l.name, l.phone, l.country, l.segment, l.utc_offset, l.hubspot_contact_id, l.extra, l.attempt_count,
-              l.phones, l.phone_idx, b.winner_call_id AS "winnerId"
-       FROM bursts b JOIN calls c ON c.burst_id = b.id JOIN leads l ON l.id = c.lead_id WHERE b.id = $1 ORDER BY c.id`, [burstId]);
-    const winner = rows.find((r) => r.id === r.winnerId);
-    if (winner && !winner.disposition) {
-      return { burstId, phase: winner.duration == null ? 'live' : 'ended', legs: [], card: await leadCard(winner.id), answeredAt: winner.answeredAt, duration: winner.duration };
-    }
-    const open = rows.filter((r) => !r.disposition && !r.answeredAt);
-    if (!winner && open.length) {
-      // Ringing preview (call-card v2): each open leg carries a card so the rep reads the lead while it rings.
-      return { ...idle, burstId, phase: 'ringing', legs: open.map((r) => ({ leadId: r.leadId, name: r.name, phone: r.phone, country: r.country, from: r.from, status: 'ringing', card: previewCard(r) })) };
-    }
-    activeBurst.delete(userId); // nothing left in flight: the map entry was stale
-  }
-  // No burst in memory (restart, or the tab was closed mid-call): an answered call with no outcome still needs one.
-  const { rows: [p] } = await q(
-    `SELECT c.id, c.burst_id AS "burstId", c.answered_at AS "answeredAt", c.duration FROM calls c JOIN bursts b ON b.id = c.burst_id
-     WHERE b.user_id = $1 AND c.answered_at IS NOT NULL AND c.disposition IS NULL ORDER BY c.started_at DESC LIMIT 1`, [userId]);
-  if (!p) return idle;
-  if (p.duration == null) activeBurst.set(userId, p.burstId); // still up at Telnyx: the red button and the dialpad find it again
-  return { burstId: p.burstId, phase: p.duration == null ? 'live' : 'ended', legs: [], card: await leadCard(p.id), answeredAt: p.answeredAt, duration: p.duration };
-}
-
 router.get('/state', async (req, res) => {
-  const { rows: [u] } = await q('SELECT phone, rep_leg_destination, telnyx_session_call_id, audio_mode, sip_username FROM users WHERE id = $1', [req.userId]);
-  res.json({ ...u, repUp: repUp.has(req.userId), ...(await snapshot(req.userId)) });
+  const { rows: [u] } = await q('SELECT phone, rep_leg_destination, telnyx_session_call_id, audio_mode, sip_username, rep_connected FROM users WHERE id = $1', [req.userId]);
+  res.json({ ...u, repUp: u.rep_connected, ...(await snapshot(req.userId)) });
 });
 
 // Browser audio (plan s9): 24h JWT for the softphone, minted from the user's telephony credential.
@@ -85,7 +54,9 @@ router.post('/connect', async (req, res) => {
   if (!dest) return res.status(400).json({ error: mode === 'browser' ? 'softphone not provisioned yet (request a token first)' : 'enter your phone number first' });
   await q('UPDATE users SET audio_mode = $2, rep_leg_destination = $3 WHERE id = $1', [req.userId, mode, dest]);
 
-  if (u.telnyx_session_call_id) await hangup(u.telnyx_session_call_id); // stale leg from an earlier session
+  await q('UPDATE users SET rep_connected = false, telnyx_session_call_id = NULL WHERE id = $1', [req.userId]);
+  repUp.delete(req.userId);
+  if (u.telnyx_session_call_id) await hangup(u.telnyx_session_call_id);
   const from = await pickFromNumber('india');
   if (!from) return res.status(400).json({ error: 'no caller ID configured (FROM_NUMBER_* in .env)' });
   const ccid = await dialRep({ to: dest, from, userId: req.userId });
@@ -102,10 +73,11 @@ router.post('/disconnect', async (req, res) => {
 
 /** One burst at a time per rep. Plants a claim token (0) synchronously, so a double-click or a second tab
  *  that lands while this request is still claiming leads is refused instead of ringing four people. */
-function guardBurst(req, res) {
-  if (!repUp.has(req.userId)) { res.status(409).json({ error: MSG.audioOff }); return false; }
-  if (activeBurst.has(req.userId)) { res.status(409).json({ error: MSG.busy }); return false; }
-  activeBurst.set(req.userId, 0);
+async function guardBurst(req, res) {
+  let error;
+  try { error = await reserveBurst(req.userId); }
+  catch (e) { if (activeBurst.get(req.userId) === 0) activeBurst.delete(req.userId); throw e; }
+  if (error) { res.status(409).json({ error: MSG[error] }); return false; }
   return true;
 }
 /** Give the token back and answer. A real burst id (startBurst succeeded) is never touched here. */
@@ -117,7 +89,7 @@ function refuse(req, res, code, error) {
 // One burst from the rep's own queue: body.legs 1 = Auto dial (one lead), otherwise LEGS_PER_BURST = Burst dial.
 // Optional body.segment narrows the queue.
 router.post('/burst', async (req, res) => {
-  if (!guardBurst(req, res)) return;
+  if (!(await guardBurst(req, res))) return;
   try {
     if (!(await listFromNumbers()).some((n) => n.available)) return refuse(req, res, 409, MSG.capped); // refuse before claiming: nothing to cool down
     await pullBeforeRead(req.userId); // a contact ticked seconds ago is dialable on this very press
@@ -139,7 +111,7 @@ router.post('/burst', async (req, res) => {
 router.get('/from-numbers', async (_req, res) => res.json(await listFromNumbers()));
 
 router.post('/dial', async (req, res) => {
-  if (!guardBurst(req, res)) return;
+  if (!(await guardBurst(req, res))) return;
   try {
     const raw = String(req.body?.to ?? '').trim();
     const to = normalizePhone(raw); // no region: +E.164 or 00... required
@@ -209,32 +181,37 @@ router.post('/disposition', async (req, res) => {
   if (sub && outcome !== 'connected') return res.status(400).json({ error: 'that outcome does not take a sub-outcome' });
   const needsTime = outcome === 'later' || (sub && NEEDS_TIME.has(sub));
   if (needsTime && !laterAt) return res.status(400).json({ error: 'Choose a date and time first.' });
-  if (needsTime && new Date(laterAt).getTime() < Date.now() - 60_000) return res.status(400).json({ error: 'That time has already passed.' });
-  const { rows: [c] } = await q(
-    'SELECT c.id, c.lead_id, c.burst_id FROM calls c JOIN bursts b ON b.id = c.burst_id WHERE c.id = $1 AND b.user_id = $2',
-    [callId, req.userId]);
-  if (!c) return res.status(404).json({ error: 'call not found' });
-  const note = String(notes ?? '').trim().slice(0, 2000) || null;
-  const reasonVal = reason ? String(reason).trim().slice(0, 120) || null : null;
-  // A face for a manual "unknown" number: save what the rep typed so the next attempt has a real card.
-  // extra || jsonb merges, so a blank company never wipes an existing one.
-  const nm = String(name ?? '').trim().slice(0, 120);
-  const co = String(company ?? '').trim().slice(0, 120);
-  if (nm || co) await q(
-    `UPDATE leads SET name = coalesce(NULLIF($2, ''), name), extra = extra || $3::jsonb WHERE id = $1`,
-    [c.lead_id, nm, JSON.stringify(co ? { company: co } : {})]);
-  // Idempotent: a repeat submit for the same call (double-click, second tab) is a no-op, not a second attempt.
-  // dispositioned_at - (answered_at + duration) is the rep's wrap-up time (manual Next makes it worth measuring).
-  const { rowCount } = await q(
-    'UPDATE calls SET disposition = $2, sub_outcome = $4, reason = $5, notes = $3, dispositioned_at = now() WHERE id = $1 AND disposition IS NULL',
-    [c.id, outcome, note, sub, reasonVal]);
-  // A booked connect (follow_up / callback) passes its time to releaseLead so the lead comes back; a plain
-  // connect passes none and leaves the queue. NEEDS_TIME is what routes the two branches in queue.js.
-  if (rowCount) {
-    await releaseLead(c.lead_id, outcome, (needsTime ? laterAt : null) ?? null);
-    logCall(c.id).catch((e) => console.warn('hubspot logCall', e.message)); // HubSpot write-back, never on the rep's path
-    pokeAdmins('call');
-  }
-  if (activeBurst.get(req.userId) === c.burst_id) activeBurst.delete(req.userId);
-  res.json({ ok: true });
+  if (needsTime && (!Number.isFinite(new Date(laterAt).getTime()) || new Date(laterAt).getTime() < Date.now() - 60_000)) return res.status(400).json({ error: 'That time has already passed.' });
+  const result = await transaction(async () => {
+    const { rows: [c] } = await q(
+      'SELECT c.id, c.lead_id, c.burst_id, c.disposition FROM calls c JOIN bursts b ON b.id = c.burst_id WHERE c.id = $1 AND b.user_id = $2 FOR UPDATE OF c',
+      [callId, req.userId]);
+    if (!c) return null;
+    if (c.disposition) return { call: c, lead: (await q('SELECT status, next_call_at, retry_minutes FROM leads WHERE id = $1', [c.lead_id])).rows[0] };
+    const note = String(notes ?? '').trim().slice(0, 2000) || null;
+    const reasonVal = reason ? String(reason).trim().slice(0, 120) || null : null;
+    // A face for a manual "unknown" number: save what the rep typed so the next attempt has a real card.
+    // extra || jsonb merges, so a blank company never wipes an existing one.
+    const nm = String(name ?? '').trim().slice(0, 120);
+    const co = String(company ?? '').trim().slice(0, 120);
+    if (nm || co) await q(
+      `UPDATE leads SET name = coalesce(NULLIF($2, ''), name), extra = extra || $3::jsonb WHERE id = $1`,
+      [c.lead_id, nm, JSON.stringify(co ? { company: co } : {})]);
+    // Idempotent: a repeat submit for the same call (double-click, second tab) is a no-op, not a second attempt.
+    // dispositioned_at - (answered_at + duration) is the rep's wrap-up time (manual Next makes it worth measuring).
+    const { rowCount } = await q(
+      'UPDATE calls SET disposition = $2, sub_outcome = $4, reason = $5, notes = $3, dispositioned_at = now() WHERE id = $1 AND disposition IS NULL',
+      [c.id, outcome, note, sub, reasonVal]);
+    // A booked connect (follow_up / callback) passes its time to releaseLead so the lead comes back; a plain
+    // connect passes none and leaves the queue. NEEDS_TIME is what routes the two branches in queue.js.
+    if (rowCount) {
+      const { rows: [lead] } = await releaseLead(c.lead_id, outcome, (needsTime ? laterAt : null) ?? null);
+      await queueCallSync(c.id);
+      return { call: c, lead };
+    }
+  });
+  if (!result) return res.status(404).json({ error: 'call not found' });
+  if (activeBurst.get(req.userId) === result.call.burst_id) activeBurst.delete(req.userId);
+  pokeAdmins('call');
+  res.json({ ok: true, status: result.lead.status, nextCallAt: result.lead.next_call_at, retryMinutes: result.lead.retry_minutes });
 });

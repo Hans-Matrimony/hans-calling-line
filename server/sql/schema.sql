@@ -194,3 +194,28 @@ ALTER TABLE calls ADD COLUMN IF NOT EXISTS hubspot_error        TEXT;         --
 -- (default off - with it off, calls to unknown numbers are never pushed to HubSpot at all).
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
 INSERT INTO settings (key, value) VALUES ('hubspot_create_contacts', 'false'::jsonb) ON CONFLICT (key) DO NOTHING;
+
+-- Reliability: acknowledged provider events and CRM work survive a process restart.
+CREATE TABLE IF NOT EXISTS telnyx_events (
+  id TEXT PRIMARY KEY,
+  event JSONB NOT NULL,
+  received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  processed_at TIMESTAMPTZ,
+  attempts INT NOT NULL DEFAULT 0,
+  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  error TEXT
+);
+CREATE INDEX IF NOT EXISTS telnyx_events_pending_idx ON telnyx_events (next_attempt_at) WHERE processed_at IS NULL;
+CREATE TABLE IF NOT EXISTS hubspot_jobs (
+  call_id INT PRIMARY KEY REFERENCES calls(id) ON DELETE CASCADE,
+  version INT NOT NULL DEFAULT 1,
+  attempts INT NOT NULL DEFAULT 0,
+  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  error TEXT
+);
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS bridged_at TIMESTAMPTZ;
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS hubspot_sync_key UUID NOT NULL DEFAULT gen_random_uuid();
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS hubspot_create_started_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS rep_connected BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS timezone TEXT;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS retry_minutes INT;

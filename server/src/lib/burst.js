@@ -1,10 +1,11 @@
-import { q } from '../db/pool.js';
+import { q, transaction } from '../db/pool.js';
 import { emitToUser, pokeAdmins } from '../io.js';
 import { startLeadRecording } from './recordings.js';
-import { logCall } from './hubspotCalls.js';
+import { queueCallSync } from './hubspotJobs.js';
+import { attemptLimit, attemptLimitSQL, offsetSQL } from './leadPolicy.js';
 import { activeBurst } from '../state.js';
 import { releaseLead, pickFromNumber } from './queue.js';
-import { resolveLead } from './countries.js';
+import { resolveLead, offsetAt } from './countries.js';
 import { hangup, beep, bridge, dialLead, startTick, noAnswerTone, stopPlayback, isInvalidDestination, telnyxDetail } from '../telnyx.js';
 
 const BEEP_TIMEOUT_MS = 900; // bridge anyway if Telnyx never reports the beep finished; short, to shrink the dead-air window in which a lead can hang up before we bridge
@@ -47,44 +48,60 @@ export async function stopRepAudio(userId) {
 
 /** Lead-leg webhook events. `state` is what we put in client_state when dialing. */
 export async function onLeadEvent(type, p, { userId, burstId, leadId }) {
-  if (type === 'call.answered') return onAnswered(p.call_control_id, userId, burstId, leadId);
+  if (type === 'call.answered' || type === 'call.hangup') {
+    const { rowCount } = await q('SELECT 1 FROM calls WHERE telnyx_call_id = $1', [p.call_control_id]);
+    if (!rowCount) throw new Error('lead dial has not been saved yet');
+  }
+  if (type === 'call.answered') return onAnswered(p.call_control_id, userId, burstId, leadId, p.occurred_at);
   if (type === 'call.hangup') return onHangup(p, userId, burstId, leadId);
 }
 
-async function onAnswered(ccid, userId, burstId, leadId) {
+async function onAnswered(ccid, userId, burstId, leadId, occurredAt = new Date()) {
   // The race (plan s11): the first answered leg claims the burst atomically. Everyone else lost.
-  const { rows: [won] } = await q(
-    `UPDATE bursts b SET winner_call_id = c.id FROM calls c
-     WHERE b.id = $1 AND c.burst_id = b.id AND c.telnyx_call_id = $2 AND b.winner_call_id IS NULL AND c.disposition IS NULL
-     RETURNING c.id AS call_id`, [burstId, ccid]);
+  const won = await transaction(async () => {
+    const { rows: [claimed] } = await q(
+      `UPDATE bursts b SET winner_call_id = c.id FROM calls c
+       WHERE b.id = $1 AND c.burst_id = b.id AND c.telnyx_call_id = $2 AND b.winner_call_id IS NULL AND c.disposition IS NULL
+       RETURNING c.id AS call_id`, [burstId, ccid]);
+    // Redelivery can resume a winner claimed before the server stopped, up to the bridge command.
+    const current = claimed ?? (await q(`SELECT c.id AS call_id FROM bursts b JOIN calls c ON c.id = b.winner_call_id
+      WHERE b.id = $1 AND c.telnyx_call_id = $2 AND c.disposition IS NULL AND c.duration IS NULL AND c.bridged_at IS NULL`, [burstId, ccid])).rows[0];
+    if (current) await q('UPDATE calls SET answered_at = coalesce(answered_at, $2) WHERE id = $1', [current.call_id, occurredAt]);
+    return current;
+  });
 
   if (!won) {
     // Telnyx may redeliver call.answered for the leg that already won: ignore it, never hang it up.
     const { rows: [dup] } = await q(
-      'SELECT 1 FROM bursts b JOIN calls c ON c.id = b.winner_call_id WHERE b.id = $1 AND c.telnyx_call_id = $2', [burstId, ccid]);
-    if (dup) return;
+      'SELECT c.id, c.bridged_at, c.duration, c.recording_status FROM bursts b JOIN calls c ON c.id = b.winner_call_id WHERE b.id = $1 AND c.telnyx_call_id = $2', [burstId, ccid]);
+    if (dup) {
+      if (dup.bridged_at && dup.duration == null && !dup.recording_status)
+        await startLeadRecording(dup.id, ccid, { kind: 'lead', userId, burstId, leadId });
+      return;
+    }
     // A human picked up after another lead already won and we hang up on them: an abandoned call (plan s12, <2% target).
     // A leg that answers after the rep pressed the red button (no winner) stays 'cancelled': no attempt, back in 10 min.
     await hangup(ccid);
-    const { rows: [ab] } = await q(
-      `UPDATE calls c SET disposition = 'abandoned', answered_at = now() FROM bursts b
-       WHERE c.telnyx_call_id = $1 AND b.id = c.burst_id AND b.winner_call_id IS NOT NULL
-         AND (c.disposition IS NULL OR c.disposition = 'cancelled') RETURNING c.id, c.lead_id`, [ccid]);
-    if (ab) {
-      // Read the number before releasing: this attempt can roll the lead onto its next number,
-      // and the toast must name the line we actually disturbed.
-      const { rows: [l] } = await q('SELECT name, phone FROM leads WHERE id = $1', [ab.lead_id]);
-      await releaseLead(ab.lead_id, 'no_answer'); // they were disturbed: counts as an attempt, retry in 2h
-      emitToUser(userId, 'lead:abandoned', { leadId: ab.lead_id, name: l?.name ?? null, phone: l?.phone ?? null });
-      logCall(ab.id).catch((e) => console.warn('hubspot logCall', e.message));
-    }
+    await transaction(async () => {
+      const { rows: [ab] } = await q(
+        `UPDATE calls c SET disposition = 'abandoned', answered_at = now() FROM bursts b
+         WHERE c.telnyx_call_id = $1 AND b.id = c.burst_id AND b.winner_call_id IS NOT NULL
+           AND (c.disposition IS NULL OR c.disposition = 'cancelled') RETURNING c.id, c.lead_id`, [ccid]);
+      if (ab) {
+        // Read the number before releasing: this attempt can roll the lead onto its next number,
+        // and the toast must name the line we actually disturbed.
+        const { rows: [l] } = await q('SELECT name, phone FROM leads WHERE id = $1', [ab.lead_id]);
+        await releaseLead(ab.lead_id, 'no_answer'); // they were disturbed: counts as an attempt, retry in 2h
+        emitToUser(userId, 'lead:abandoned', { leadId: ab.lead_id, name: l?.name ?? null, phone: l?.phone ?? null });
+        await queueCallSync(ab.id);
+      }
+    });
     return;
   }
 
-  await q('UPDATE calls SET answered_at = now() WHERE id = $1', [won.call_id]);
   await cancelOpenLegs(burstId, won.call_id);
-  // Card goes up while the beep sounds. Not awaited: a DB hiccup here must never leave an answered human unbridged.
-  leadCard(won.call_id).then((card) => emitToUser(userId, 'lead:answered', card)).catch((e) => console.error('leadCard', e.message));
+  // A database interruption leaves this event pending, so the worker can resume the claimed winner.
+  emitToUser(userId, 'lead:answered', await leadCard(won.call_id));
 
   const rep = await repLeg(userId);
   if (!rep) { await hangup(ccid); return; } // rep leg vanished mid-burst
@@ -92,10 +109,11 @@ async function onAnswered(ccid, userId, burstId, leadId) {
   try {
     await stopPlayback(rep);      // end the dialing tick
     await beepThenWait(rep);      // "say hello now"; resolves on playback.ended (or the timeout)
-    await bridge(rep, ccid);
+    await bridge(rep, ccid, 'bridge-' + won.call_id);
+    await q('UPDATE calls SET bridged_at = coalesce(bridged_at, now()) WHERE id = $1', [won.call_id]);
     // Record from here: only a bridged conversation, only the lead leg (the rep's leg lives all shift).
-    // Not awaited and never throws - recording must not touch the call.
-    startLeadRecording(won.call_id, ccid, { kind: 'lead', userId, burstId, leadId });
+    // Recording handles its own errors; wait so a crash before it starts can resume on redelivery.
+    await startLeadRecording(won.call_id, ccid, { kind: 'lead', userId, burstId, leadId });
     emitToUser(userId, 'call:bridged', { callId: won.call_id });
     pokeAdmins('live');
   } catch (e) {
@@ -112,33 +130,27 @@ async function onAnswered(ccid, userId, burstId, leadId) {
 }
 
 async function onHangup(p, userId, burstId, leadId) {
-  const { rows: [c] } = await q('SELECT id, disposition, answered_at FROM calls WHERE telnyx_call_id = $1', [p.call_control_id]);
-  if (!c) return;
-  await q('UPDATE calls SET ended_at = coalesce(ended_at, now()) WHERE id = $1', [c.id]); // ring time for the log; talk time is still duration
-
+  const c = await transaction(async () => {
+    const { rows: [call] } = await q('SELECT id, disposition, answered_at FROM calls WHERE telnyx_call_id = $1 FOR UPDATE', [p.call_control_id]);
+    if (!call) throw new Error('lead dial has not been saved yet');
+    await q('UPDATE calls SET ended_at = coalesce(ended_at, $2) WHERE id = $1', [call.id, p.occurred_at ?? new Date()]);
+    if (call.answered_at) {
+      const { rows: [d] } = await q(`UPDATE calls SET duration = coalesce(duration, GREATEST(0, EXTRACT(EPOCH FROM (ended_at - answered_at))::int)) WHERE id = $1 RETURNING duration`, [call.id]);
+      await queueCallSync(call.id);
+      return { ...call, duration: d.duration };
+    }
+    if (!call.disposition) {
+      const dead = /unallocated|invalid_number|number_changed|unassigned|not_found/.test(p.hangup_cause ?? '');
+      await q('UPDATE calls SET disposition = $2 WHERE id = $1', [call.id, dead ? 'failed' : 'no_answer']);
+      await releaseLead(leadId, dead ? 'invalid' : 'no_answer');
+      await queueCallSync(call.id);
+    }
+    return call;
+  });
   if (c.answered_at) {
-    // Conversation over. Duration for the record; the disposition is the rep's call (no auto-advance).
-    // Talk time = hangup minus answer (start_time in the payload is dial time). coalesce keeps a redelivery idempotent.
-    const { rows: [d] } = await q(
-      `UPDATE calls SET duration = coalesce(duration, EXTRACT(EPOCH FROM (now() - answered_at))::int) WHERE id = $1 RETURNING duration`, [c.id]);
-    if (!c.disposition) emitToUser(userId, 'call:ended', { callId: c.id, leadId, duration: d.duration, cause: p.hangup_cause });
-    // On the timeline now, updated when the outcome is saved: a rep who never presses a tile must not
-    // make the call vanish from HubSpot.
-    logCall(c.id).catch((e) => console.warn('hubspot logCall', e.message));
+    if (!c.disposition) emitToUser(userId, 'call:ended', { callId: c.id, leadId, duration: c.duration, cause: p.hangup_cause });
     pokeAdmins('live');
     return;
-  }
-
-  if (!c.disposition) {
-    // Never answered. Timeout/busy/rejected -> no_answer. Dead numbers -> stop the lead.
-    // not_found is SIP 404 from the far end: the number does not exist there (seen ending in 1.3 s), not a busy line.
-    // The WHERE guard turns a redelivered hangup into a no-op instead of a double-counted attempt.
-    const dead = /unallocated|invalid_number|number_changed|unassigned|not_found/.test(p.hangup_cause ?? '');
-    const { rowCount } = await q('UPDATE calls SET disposition = $2 WHERE id = $1 AND disposition IS NULL', [c.id, dead ? 'failed' : 'no_answer']);
-    if (rowCount) {
-      await releaseLead(leadId, dead ? 'invalid' : 'no_answer');
-      logCall(c.id).catch((e) => console.warn('hubspot logCall', e.message)); // nobody answered: no outcome step will follow
-    }
   }
 
   // Every leg settled and nobody won: the burst is over, the rep can click Start calling again.
@@ -160,13 +172,15 @@ async function onHangup(p, userId, burstId, leadId) {
 export async function cancelOpenLegs(burstId, keepCallId = null) {
   const { rows } = await q(
     `SELECT id, lead_id, telnyx_call_id, answered_at FROM calls
-     WHERE burst_id = $1 AND disposition IS NULL AND ($2::int IS NULL OR id <> $2)`, [burstId, keepCallId]);
+     WHERE burst_id = $1 AND (disposition IS NULL OR disposition = 'cancelled') AND ($2::int IS NULL OR id <> $2)`, [burstId, keepCallId]);
   for (const c of rows) {
     if (!c.answered_at) {
       // Guard, not just the SELECT above: the three callers race (a lead answered, the red button,
       // the rep leg dropping), and only one of them may release the lead.
-      const { rowCount } = await q(`UPDATE calls SET disposition = 'cancelled' WHERE id = $1 AND disposition IS NULL`, [c.id]);
-      if (rowCount) await releaseLead(c.lead_id, 'cancelled');
+      await transaction(async () => {
+        const { rowCount } = await q(`UPDATE calls SET disposition = 'cancelled' WHERE id = $1 AND disposition IS NULL AND answered_at IS NULL`, [c.id]);
+        if (rowCount) await releaseLead(c.lead_id, 'cancelled');
+      });
     }
     if (c.telnyx_call_id) await hangup(c.telnyx_call_id);
   }
@@ -177,7 +191,8 @@ export async function burstLegs(burstId) {
   const { rows } = await q(
     // to_number, not l.phone: this runs after every leg was released, and a released lead may have
     // already rolled onto its next number. The tape must name what rang.
-    `SELECT l.id AS "leadId", l.name, coalesce(c.to_number, l.phone) AS phone, c.disposition
+    `SELECT l.id AS "leadId", l.name, coalesce(c.to_number, l.phone) AS phone, c.disposition,
+      l.retry_minutes AS "retryMinutes", l.next_call_at AS "nextCallAt", l.status
      FROM calls c JOIN leads l ON l.id = c.lead_id WHERE c.burst_id = $1 ORDER BY c.id`, [burstId]);
   return rows;
 }
@@ -188,7 +203,8 @@ export async function burstLegs(burstId) {
 export function previewCard(lead) {
   return {
     callId: 0, leadId: lead.id, name: lead.name, phone: lead.phone, country: lead.country, segment: lead.segment,
-    utcOffset: lead.utc_offset, hubspotId: lead.hubspot_contact_id, extra: lead.extra ?? {},
+    utcOffset: lead.timezone ? offsetAt(lead.timezone) : lead.utc_offset, timezone: lead.timezone,
+    attemptLimit: attemptLimit(lead.phones), hubspotId: lead.hubspot_contact_id, extra: lead.extra ?? {},
     attempt: (lead.attempt_count ?? 0) + 1, lastOutcome: null, lastNote: null,
     lastCallAt: lead.last_call_at ?? null, everConnected: null, callCount: lead.attempt_count ?? 0,
     phones: lead.phones ?? [lead.phone], phoneIdx: lead.phone_idx ?? 1,
@@ -199,7 +215,7 @@ export function previewCard(lead) {
 export async function leadCard(callId) {
   const { rows: [r] } = await q(
     `SELECT c.id AS "callId", l.id AS "leadId", l.name, coalesce(c.to_number, l.phone) AS phone, l.country, l.segment,
-            l.utc_offset AS "utcOffset", l.phones, l.phone_idx AS "phoneIdx",
+            ${offsetSQL()} AS "utcOffset", l.timezone, ${attemptLimitSQL()} AS "attemptLimit", l.phones, l.phone_idx AS "phoneIdx",
             l.hubspot_contact_id AS "hubspotId", l.extra, l.attempt_count + 1 AS attempt, l.attempt_count AS "callCount",
             (SELECT p.disposition FROM calls p WHERE p.lead_id = l.id AND p.id <> c.id AND p.disposition IS NOT NULL
              ORDER BY p.started_at DESC LIMIT 1) AS "lastOutcome",
@@ -246,8 +262,11 @@ export async function startBurst(userId, leads, fromOverride = null, extra = {})
       // A transient error still costs nothing and comes back in 10 minutes ('cancelled').
       const dead = isInvalidDestination(e);
       console.error('dial failed', lead.phone, dead ? '(invalid, not retrying)' : '', e.message); // always the Telnyx body
-      await q(`INSERT INTO calls (lead_id, burst_id, from_number, to_number, disposition) VALUES ($1, $2, $3, $4, 'failed')`, [lead.id, burst.id, from, lead.phone]);
-      await releaseLead(lead.id, dead ? 'invalid' : 'cancelled');
+      await transaction(async () => {
+        const { rows: [failed] } = await q(`INSERT INTO calls (lead_id, burst_id, from_number, to_number, disposition) VALUES ($1, $2, $3, $4, 'failed') RETURNING id`, [lead.id, burst.id, from, lead.phone]);
+        await releaseLead(lead.id, dead ? 'invalid' : 'cancelled');
+        await queueCallSync(failed.id);
+      });
       lastError = dead ? MSG.invalid : MSG.notPlaced(telnyxDetail(e));
       emitToUser(userId, 'lead:failed', { leadId: lead.id, name: lead.name, phone: lead.phone, error: lastError });
     }

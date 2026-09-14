@@ -1,6 +1,7 @@
 // Every dashboard and wallet query, in one place so the admin routes stay thin and the test can call
 // them directly. All dates are IST calendar days (docs/ADMIN-DASHBOARD.md s3): the rep console and the
 // caller-ID cap stay on the UTC day, this does not.
+import { offsetSQL, attemptLimitSQL } from './leadPolicy.js';
 import { q } from '../db/pool.js';
 
 const TZ = 'Asia/Kolkata';
@@ -163,7 +164,7 @@ export async function leads(f, o = {}) {
   const source = o.source ? String(o.source) : null;
   const text = o.q ? String(o.q).trim() : null;
   const { rows } = await q(`
-    SELECT l.id, l.name, l.phone, l.phones, l.country, l.utc_offset, l.segment, l.source, l.status, l.attempt_count, l.next_call_at,
+    SELECT l.id, l.name, l.phone, l.phones, l.country, ${offsetSQL()} AS utc_offset, l.timezone, ${attemptLimitSQL()} AS "attemptLimit", l.segment, l.source, l.status, l.attempt_count, l.next_call_at,
            l.last_call_at, l.hubspot_contact_id, l.extra->>'company' AS company, l.extra->>'hubspotUrl' AS hubspot_url,
            u.id AS rep_id, u.email AS rep,
            (SELECT p.disposition FROM calls p WHERE p.lead_id = l.id AND p.disposition IS NOT NULL ORDER BY p.started_at DESC LIMIT 1) AS last_outcome,
@@ -180,7 +181,7 @@ export async function leads(f, o = {}) {
 
 export async function leadDetail(id) {
   const { rows: [lead] } = await q(`
-    SELECT l.*, u.email AS rep, l.extra->>'company' AS company, l.extra->>'hubspotUrl' AS hubspot_url
+    SELECT l.*, ${offsetSQL()} AS utc_offset, ${attemptLimitSQL()} AS "attemptLimit", u.email AS rep, l.extra->>'company' AS company, l.extra->>'hubspotUrl' AS hubspot_url
     FROM leads l LEFT JOIN users u ON u.id = l.user_id WHERE l.id = $1`, [id]);
   if (!lead) return null;
   const { rows: attempts } = await q(`

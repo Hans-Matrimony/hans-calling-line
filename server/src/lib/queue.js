@@ -1,24 +1,26 @@
 import { q, pool } from '../db/pool.js';
-import { MAX_ATTEMPTS, MIN_GAP_HOURS, ATTEMPTS_PER_NUMBER, ROLL_GAP_MINUTES, LEAD_LOCAL_WINDOW, IGNORE_WINDOWS, DAILY_CAP_PER_NUMBER } from '../config.js';
+import { MIN_GAP_HOURS, ATTEMPTS_PER_NUMBER, ROLL_GAP_MINUTES, LEAD_LOCAL_WINDOW, IGNORE_WINDOWS, DAILY_CAP_PER_NUMBER } from '../config.js';
 import { resolveLead, segmentFor } from './countries.js';
+import { localClockSQL, offsetSQL, attemptLimitSQL } from './leadPolicy.js';
 
 // The lead's wall clock right now (a timestamp without zone), and its hour, as SQL over leads alias `l`.
-const LOCAL = `((now() AT TIME ZONE 'UTC') + (l.utc_offset * interval '1 hour'))`;
+const LOCAL = localClockSQL();
 const LOCAL_HOUR = `EXTRACT(HOUR FROM ${LOCAL})`;
 // A lead-local wall-clock expression back to an instant.
-const AT_LOCAL = (wall) => `((${wall}) - (l.utc_offset * interval '1 hour')) AT TIME ZONE 'UTC'`;
+const AT_LOCAL = (wall) => `(CASE WHEN l.timezone IS NOT NULL THEN (${wall}) AT TIME ZONE l.timezone
+  ELSE ((${wall}) - l.utc_offset * interval '1 hour') AT TIME ZONE 'UTC' END)`;
 // Already rung at this local hour (any day): hour-variance rule. Cancelled loser legs are not attempts.
 const TRIED_THIS_HOUR = `EXISTS (
         SELECT 1 FROM calls c
         WHERE c.lead_id = l.id AND c.disposition IS DISTINCT FROM 'cancelled'
-          AND EXTRACT(HOUR FROM (c.started_at AT TIME ZONE 'UTC') + (l.utc_offset * interval '1 hour')) = ${LOCAL_HOUR})`;
+          AND EXTRACT(HOUR FROM ${localClockSQL('l', 'c.started_at')}) = ${LOCAL_HOUR})`;
 const { start: WIN_START, end: WIN_END } = LEAD_LOCAL_WINDOW;
 
 // How many attempts this lead gets in total, over all of its numbers: MAX_ATTEMPTS for a one- or
 // two-number lead, 9 for a three-number one, so the last number is still reached after attempts
 // lost to abandoned legs and bridge failures. Inlined, never a bind parameter, so the expression
 // can be dropped into any query without shifting its placeholders.
-const ATTEMPT_CEILING = `GREATEST(${MAX_ATTEMPTS}, ${ATTEMPTS_PER_NUMBER} * cardinality(l.phones))`;
+const ATTEMPT_CEILING = attemptLimitSQL();
 
 // When the calling-hours gate next admits `l`, ignoring next_call_at: tomorrow's 10:00 local once past
 // 19:00 (or when the next local hour would be), today's 10:00 before it, the next local hour when this
@@ -70,7 +72,7 @@ function eligibleWhere(segment, { user = '$2' } = {}) {
 }
 
 // What a row of Up next shows (peekLeads and queueOverview return the same shape).
-const LEAD_COLS = `l.id, l.name, l.phone, l.phones, l.country, l.segment, l.utc_offset, l.attempt_count, l.status, l.next_call_at, l.extra,
+const LEAD_COLS = `l.id, l.name, l.phone, l.phones, l.country, l.segment, ${offsetSQL()} AS utc_offset, l.timezone, l.retry_minutes, ${ATTEMPT_CEILING} AS "attemptLimit", l.attempt_count, l.status, l.next_call_at, l.extra,
             l.phone_idx AS "phoneIdx", cardinality(l.phones) AS "phoneCount", l.last_call_at AS "lastCallAt",
             (SELECT p.disposition FROM calls p WHERE p.lead_id = l.id AND p.disposition IS NOT NULL ORDER BY p.started_at DESC LIMIT 1) AS last_outcome,
             EXISTS (SELECT 1 FROM calls p WHERE p.lead_id = l.id AND p.disposition = 'connected') AS "everConnected"`;
@@ -99,18 +101,19 @@ export async function queueOverview(userId, { per = 5, expand = [] } = {}) {
     g AS (
       SELECT *, CASE WHEN ready THEN 'ready'
                      WHEN why = 'window' THEN 'window:' || to_char("opensAt" AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+                     WHEN why = 'gap' THEN 'gap:' || coalesce(retry_minutes::text, 'unknown')
                      ELSE coalesce(why, 'gap') END AS key
       FROM l0)`;
   const [{ rows: heads }, { rows }] = await Promise.all([
     q(`${grouped}
-       SELECT key, min(why) AS why, min("opensAt") AS "opensAt", count(*)::int AS count,
+       SELECT key, min(why) AS why, min(retry_minutes) AS "retryMinutes", min("opensAt") AS "opensAt", count(*)::int AS count,
               coalesce(array_agg(DISTINCT country) FILTER (WHERE country IS NOT NULL AND country <> ''), '{}') AS countries
        FROM g GROUP BY key`, [userId]),
     q(`${grouped}, n AS (SELECT *, row_number() OVER (PARTITION BY key ORDER BY "opensAt", next_call_at, id) AS rn FROM g)
        SELECT * FROM n WHERE rn <= $2 OR key = ANY($3) ORDER BY "opensAt", next_call_at, id`, [userId, per, expand]),
   ]);
   const group = (h) => ({
-    key: h.key, why: h.why, opensAt: h.opensAt, count: h.count, countries: h.countries,
+    key: h.key, why: h.why, retryMinutes: h.retryMinutes, opensAt: h.opensAt, count: h.count, countries: h.countries,
     leads: rows.filter((r) => r.key === h.key).map(({ key, rn, ready, ...lead }) => lead),
   });
   const ready = heads.find((h) => h.key === 'ready');
@@ -159,14 +162,14 @@ export async function claimManual(userId, to) {
   }
   const resolved = resolveLead({ country: null, phone: to });
   const { rows: [lead] } = await q(
-    `INSERT INTO leads (hubspot_contact_id, phone, phones, utc_offset, segment, status, user_id)
-     VALUES ($1, $2, ARRAY[$2], $3, $4, 'in_flight', $5)
+    `INSERT INTO leads (hubspot_contact_id, phone, phones, utc_offset, segment, status, user_id, timezone, source)
+     VALUES ($1, $2, ARRAY[$2], $3, $4, 'in_flight', $5, $6, 'manual')
      ON CONFLICT (hubspot_contact_id) DO UPDATE
        SET status = 'in_flight', user_id = $5, phone = EXCLUDED.phone,
            phones = CASE WHEN EXCLUDED.phone = ANY(leads.phones) THEN leads.phones ELSE EXCLUDED.phones END,
            phone_idx = coalesce(array_position(leads.phones, EXCLUDED.phone), 1)
      RETURNING *`,
-    ['manual-' + to, to, resolved?.offset ?? null, segmentFor(resolved?.region), userId]);
+    ['manual-' + to, to, resolved?.offset ?? null, segmentFor(resolved?.region), userId, resolved?.timezone ?? null]);
   return lead;
 }
 
@@ -192,31 +195,34 @@ export function releaseLead(leadId, outcome, laterAt = null) {
       // connect - disposition stays 'connected', so stats and the tape credit it - yet the lead comes
       // back at the chosen time. `laterAt` is what tells the two apart.
       return laterAt
-        ? q(`UPDATE leads SET status = 'later', next_call_at = $2, last_call_at = now(), attempt_count = attempt_count + 1 WHERE id = $1`, [leadId, laterAt])
-        : q(`UPDATE leads SET status = 'connected', last_call_at = now(), attempt_count = attempt_count + 1 WHERE id = $1`, [leadId]);
+        ? q(`UPDATE leads SET status = 'later', retry_minutes = NULL, next_call_at = $2, last_call_at = now(), attempt_count = attempt_count + 1 WHERE id = $1 RETURNING *`, [leadId, laterAt])
+        : q(`UPDATE leads SET status = 'connected', retry_minutes = NULL, last_call_at = now(), attempt_count = attempt_count + 1 WHERE id = $1 RETURNING *`, [leadId]);
     case 'no_answer':
     case 'failed':
       // Three tries on this number, then the next one 15 min later. Only when the lead has no
       // number left does the whole budget apply and the lead exhaust.
       return q(`UPDATE leads l SET attempt_count = l.attempt_count + 1, last_call_at = now(),${ADVANCE(ROLL)},
+                  retry_minutes = CASE WHEN ${ROLL} THEN ${ROLL_GAP_MINUTES} ELSE ${MIN_GAP_HOURS * 60} END,
                   next_call_at = now() + CASE WHEN ${ROLL} THEN interval '${ROLL_GAP_MINUTES} minutes'
                                                            ELSE interval '${MIN_GAP_HOURS} hours' END,
                   status = CASE WHEN NOT (${ROLL}) AND l.attempt_count + 1 >= ${ATTEMPT_CEILING} THEN 'exhausted' ELSE 'queued' END
-                WHERE l.id = $1`, [leadId]);
+                WHERE l.id = $1 RETURNING *`, [leadId]);
     case 'later': // rep-picked datetime, does not consume an attempt
-      return q(`UPDATE leads SET status = 'later', next_call_at = $2, last_call_at = now() WHERE id = $1`, [leadId, laterAt]);
+      return q(`UPDATE leads SET status = 'later', retry_minutes = NULL, next_call_at = $2, last_call_at = now() WHERE id = $1 RETURNING *`, [leadId, laterAt]);
     case 'cancelled': // losing burst leg: back to the queue, nothing consumed. 10 min cooldown so the
       // lead is not rung again by the very next burst (seen live: two missed calls 20 s apart).
       // Never rolls: a leg can legitimately release twice (cancelled, then abandoned), and only
       // the second one may count against the number.
-      return q(`UPDATE leads SET status = 'queued', next_call_at = GREATEST(next_call_at, now() + interval '10 minutes') WHERE id = $1`, [leadId]);
+      return q(`UPDATE leads SET status = 'queued', retry_minutes = GREATEST(10, ceil(EXTRACT(EPOCH FROM (next_call_at - now())) / 60)::int),
+                next_call_at = GREATEST(next_call_at, now() + interval '10 minutes') WHERE id = $1 RETURNING *`, [leadId]);
     case 'invalid': // dead number (unallocated / invalid), or the rep's "Wrong number": don't spend
       // this number's remaining tries on a line that is answering for someone else - go straight to
       // the alternate. Only a lead with nowhere left to go stops.
       return q(`UPDATE leads l SET attempt_count = l.attempt_count + 1, last_call_at = now(),${ADVANCE(HAS_NEXT)},
+                  retry_minutes = CASE WHEN ${HAS_NEXT} THEN ${ROLL_GAP_MINUTES} END,
                   next_call_at = CASE WHEN ${HAS_NEXT} THEN now() + interval '${ROLL_GAP_MINUTES} minutes' ELSE l.next_call_at END,
                   status = CASE WHEN ${HAS_NEXT} THEN 'queued' ELSE 'stopped' END
-                WHERE l.id = $1`, [leadId]);
+                WHERE l.id = $1 RETURNING *`, [leadId]);
     default:
       throw new Error('unknown outcome ' + outcome);
   }

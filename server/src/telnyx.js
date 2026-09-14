@@ -65,9 +65,9 @@ export const startTick = (repLeg) => play(repLeg, 'tick.wav', { loop: 'infinity'
 export const noAnswerTone = (repLeg) => play(repLeg, 'noanswer.wav');                  // burst over, nobody picked up
 export const stopPlayback = (leg) => telnyx().calls.actions.stopPlayback(leg, { stop: 'all' })
   .catch((e) => console.warn('stopPlayback', String(leg).slice(-8), e.message));
-export const bridge = (repLeg, leadLeg) =>
+export const bridge = (repLeg, leadLeg, commandId) =>
   // park_after_unbridge: without it Telnyx hangs up the rep leg too when the lead hangs up (plan s8: rep leg stays open all session).
-  telnyx().calls.actions.bridge(repLeg, { call_control_id_to_bridge_with: leadLeg, prevent_double_bridge: true, park_after_unbridge: 'self' });
+  telnyx().calls.actions.bridge(repLeg, { command_id: commandId, call_control_id_to_bridge_with: leadLeg, prevent_double_bridge: true, park_after_unbridge: 'self' });
 /** Did Telnyx refuse the destination itself, rather than have a hiccup?
  *
  *  A malformed number comes back as 403 with `"error_code":"D11"` / code 10010 ("Destination Number

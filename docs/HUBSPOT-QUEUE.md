@@ -1,5 +1,7 @@
 # HubSpot → queue: the second inlet
 
+Implementation update, September 12: [Reliability fixes](RELIABILITY-FIXES.md) supersedes the earlier field-refresh and fixed-offset rules below. Current CRM fields and owners refresh under row locks, live calls defer changes, timezone rules follow DST, and retry groups show their actual delay.
+
 Decided 2026-09-09 with Divyanshu, revised the same day after a "make it seamless" pass (§9 lists
 what changed). Supersedes PLAN-v2 §1 row "Sync" and §5. CSV upload (`POST /api/leads/import`) is
 untouched and stays the first inlet.
