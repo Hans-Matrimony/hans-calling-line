@@ -35,7 +35,7 @@ router.post('/plivo/inbound', async (req, res) => {
     const p = req.body ?? {};
     const from = String(p.From ?? '').trim();
     const uuid = p.CallUUID || p.call_uuid;
-  const bye = (text) => res.type('text/xml').send(xml((text ? '<Say>' + escape(text) + '</Say>' : '') + '<Hangup/>'));
+  const bye = (text) => res.type('text/xml').send(xml((text ? '<Speak>' + escape(text) + '</Speak>' : '') + '<Hangup/>')); // Plivo's TTS verb is <Speak>, not Twilio's <Say>
     if (!/^\+\d{6,15}$/.test(from) || typeof uuid !== 'string' || !uuid) return bye('Sorry, this line could not take your call. Goodbye.');
     const { rows: [rep] } = await q(
       `SELECT id, telnyx_session_call_id FROM users
