@@ -114,6 +114,10 @@ export function useDialer(me: Me) {
   const [callerName, setCallerName] = useState('');                 // unknown-number capture: who this manual dial turned out to be
   const [callerCompany, setCallerCompany] = useState('');
   const [lastCall, setLastCall] = useState<LastCall | null>(null); // the handset's "last call" strip + redial
+  const [inbound, setInbound] = useState<{ id: string; phone: string } | null>(null); // a callback caller waiting on hold
+  const inboundRef = useRef<{ id: string; phone: string } | null>(null);
+  const [inboundLive, setInboundLive] = useState<{ id: string; phone: string } | null>(null); // an answered callback caller, on the line now
+  const inboundLiveRef = useRef<{ id: string; phone: string } | null>(null);
   const [lastSaved, setLastSaved] = useState<SavedCall | null>(null);
   const [prefill, setPrefill] = useState<string | null>(null);     // a number handed to the handset from Up next / Activity (tap-to-dial)
   // Auto dial / Burst dial run. Lives here, not in the page, so switching tabs or a lead answering elsewhere keeps it.
@@ -126,6 +130,8 @@ export function useDialer(me: Me) {
   const manualRef = useRef(false);                                 // the burst in flight came from the manual keypad
   const phaseRef = useRef<Phase>('idle'); phaseRef.current = phase;
   const answeredRef = useRef<Date | null>(null); answeredRef.current = answeredAt;
+  inboundRef.current = inbound;
+  inboundLiveRef.current = inboundLive;
   const draftCall = useRef<number | null>(null);
 
   // Keep an unsaved note through reloads in this tab, scoped to this rep and call.
@@ -221,8 +227,14 @@ export function useDialer(me: Me) {
     // A HubSpot pull changed this rep's queue (a tick, an untick): say what arrived and show it, no reload.
     socket.on('queue:synced', (c: SyncResult) => { sys('HubSpot: ' + describePull(c)); refresh(); });
     socket.on('queue:changed', refresh);
-    // A reverted call joined the rep's audio: the caller is on the line right now.
-    socket.on('inbound:caller', (p: { phone?: string | null }) => { sys('Incoming callback' + (p.phone ? ' — ' + p.phone : '') + ' joined your audio'); refresh(); });
+    // Inbound (revert) calls: the caller waits on hold until the rep answers or rejects.
+    socket.on('inbound:incoming', (p: { inboundId: string; phone: string }) => {
+      setInbound({ id: p.inboundId, phone: p.phone });
+      push('dialing', 'Incoming callback — ' + p.phone, 'Answer or send to the queue');
+    });
+    socket.on('inbound:accepted', (p: { inboundId: string; phone?: string | null }) => { setInbound(null); setInboundLive({ id: p.inboundId, phone: p.phone ?? 'callback' }); sys('On the line — incoming callback'); });
+    socket.on('inbound:live', (p: { inboundId: string; phone?: string | null }) => { setInbound(null); setInboundLive({ id: p.inboundId, phone: p.phone ?? 'callback' }); sys('On the line — incoming callback'); });
+    socket.on('inbound:ended', () => { setInbound(null); setInboundLive(null); sys('Callback call ended'); refresh(); });
     socket.on('call:ended', (p: { callId: number; duration: number | null; cause?: string }) => {
       // The red button and the hangup webhook both report this call: one row, one refresh.
       const id = 'end' + p.callId;
@@ -276,6 +288,7 @@ export function useDialer(me: Me) {
 
   return {
     me, rep, recovered, phase, legs, card, answeredAt, duration, endCause, stats, fromNumbers, upNext, queue, feed, feedLoaded, busy, err, loadError, softphone,
+    inbound, inboundLive,
     retryLoad: () => { refresh(); void sync(); },
     note, setNote, lastCall, lastSaved, dismissSaved: () => setLastSaved(null), prefill, setPrefill, run, lastRun, runTape, lastBurst, heldBack,
     /** "Show all N" on an Up next group: fetch it in full, and keep it open across refreshes. */
@@ -293,6 +306,10 @@ export function useDialer(me: Me) {
     }),
     // Browser hangs up first so the SDK never BYEs a leg the server already ended; the server call then just clears state.
     disconnect: () => runCmd('disconnect audio', async () => { softphone.disconnect(); await post('/api/session/disconnect'); }),
+    // Inbound (revert) calls waiting on hold: pick up, or send the caller to the callback queue.
+    acceptInbound: () => { const i = inboundRef.current; if (i) void post('/api/session/inbound/' + i.id + '/accept').catch((e) => setErr((e as Error).message)); },
+    rejectInbound: () => { const i = inboundRef.current; if (i) { setInbound(null); void post('/api/session/inbound/' + i.id + '/reject').catch((e) => setErr((e as Error).message)); } },
+    endInbound: () => { const i = inboundLiveRef.current; if (i) { setInboundLive(null); void post('/api/session/inbound/' + i.id + '/end').catch((e) => setErr((e as Error).message)); } },
     /** legs 1 = Auto dial (one lead), 2 = Burst dial (first to answer wins). 'drained' = nobody is due, which is a
      *  state to explain, not an error to show in red. undefined = the server refused for a real reason (shown in err). */
     startCalling: (legs: 1 | 2): Promise<'started' | 'drained' | undefined> => runCmd('start dialing', async () => {

@@ -95,6 +95,20 @@ export default function Console({ me, onLogout }: { me: Me; onLogout: () => void
             <button className="btn" onClick={() => { setImportMessage(''); fileRef.current?.click(); }} disabled={d.busy}><Upload size={15} />Import CSV</button>
           </div>
           {importMessage && <p className="cw-notice" role="status">{importMessage}</p>}
+          {d.inbound && (
+            <div className="cw-active-banner inbound-ring" role="alert">
+              <span>Incoming callback — <b>{d.inbound.phone}</b></span>
+              <button className="btn btn-blue" onClick={d.acceptInbound}>Answer</button>
+              <button className="btn" onClick={d.rejectInbound}>Reject — send to queue</button>
+            </div>
+          )}
+          {d.inboundLive && (
+            <div className="cw-active-banner" role="status">
+              <span>On the line — <b>{d.inboundLive.phone}</b> (incoming callback)</span>
+              <button className="btn" onClick={d.softphone.toggleMute} disabled={d.softphone.status !== 'in_call'}>{d.softphone.muted ? 'Unmute' : 'Mute'}</button>
+              <button className="btn" onClick={d.endInbound}>End call</button>
+            </div>
+          )}
           {(d.err || d.softphone.error) && <div className="cw-error" role="alert">{d.err || d.softphone.error}</div>}
           {d.loadError && <div className="cw-error" role="alert">{d.loadError} Displayed queue data may be out of date. <button className="cw-link" onClick={d.retryLoad}>Retry loading</button></div>}
           {(d.phase !== 'idle') && (tab === 'activity' || tab === 'upnext') && <div className="cw-active-banner"><span>{d.phase === 'ended' ? 'This call needs an outcome.' : 'You have a call in progress.'}</span><button className="btn btn-blue" onClick={() => setTab(d.run?.mode || 'dialer')}>Return to call</button></div>}

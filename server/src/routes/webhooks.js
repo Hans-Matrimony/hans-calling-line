@@ -5,7 +5,7 @@ import { emitToUser, pokeAdmins } from '../io.js';
 import { onCallCost, refreshCallCost } from '../lib/costs.js';
 import { onRecordingSaved, onRecordingError } from '../lib/recordings.js';
 import { repUp, activeBurst } from '../state.js';
-import { decodeState, encodeState, validWebhook, voiceCall, callbackUrl, conferenceMembers } from '../plivo.js';
+import { decodeState, encodeState, validWebhook, voiceCall, callbackUrl, conferenceMembers, plivoRequest, publicUrl } from '../plivo.js';
 import { onLeadEvent, cancelOpenLegs, onRepPlaybackEnded } from '../lib/burst.js';
 import { claimManual } from '../lib/queue.js';
 import { storeEvent, processEvent, startEventWorker } from '../lib/webhookInbox.js';
@@ -54,11 +54,14 @@ router.post('/plivo/inbound', async (req, res) => {
       const room = 'rep-' + rep.telnyx_session_call_id;
       const members = await conferenceMembers(room).catch(() => null);
       if (members && members.length < 2) {
+        // Park the caller on hold and ring the rep's screen: they pick up with Answer / Reject.
         const id = randomUUID();
         await q('INSERT INTO plivo_calls(id, call_uuid, state) VALUES ($1, $2, $3)',
           [id, uuid, JSON.stringify({ kind: 'inbound', userId: rep.id, phone: from })]);
-        return res.type('text/xml').send(xml('<Conference startConferenceOnEnter="true" endConferenceOnExit="false" maxMembers="2" timeLimit="14400" enterSound="" exitSound="" callbackMethod="POST" callbackUrl="' +
-          escape(callbackUrl('conference', id, { stage: 'inbound' })) + '">' + escape(room) + '</Conference>'));
+        emitToUser(rep.id, 'inbound:incoming', { inboundId: id, phone: from });
+        return res.type('text/xml').send(xml('<Speak>One moment please, connecting you.</Speak>' +
+          '<Conference startConferenceOnEnter="true" endConferenceOnExit="false" maxMembers="1" timeLimit="600" enterSound="" exitSound="" callbackMethod="POST" callbackUrl="' +
+          escape(callbackUrl('conference', id, { stage: 'hold' })) + '">hold-' + escape(id) + '</Conference>'));
       }
     }
     // Nobody free to take it: queue the callback with the rep the caller knows.
@@ -101,7 +104,11 @@ router.post('/plivo/:action', async (req, res) => {
   if (action === 'answer' || action === 'bridge') {
     if (action === 'answer' && call.cancelled) await lateAnswer();
     let allowed = !call.cancelled && !call.ended_at;
-    if (action === 'bridge') {
+    if (action === 'bridge' && call.state.kind === 'inbound') {
+      // The rep pressed Answer: hand the held caller into the rep's CURRENT room only.
+      const { rows: [u] } = await q('SELECT telnyx_session_call_id, rep_connected FROM users WHERE id = $1', [call.state.userId]);
+      allowed = allowed && !!call.bridge_room && !!u?.rep_connected && u.telnyx_session_call_id === call.bridge_room.replace(/^rep-/, '');
+    } else if (action === 'bridge') {
       const { rowCount } = await q(`SELECT 1 FROM calls c JOIN bursts b ON b.winner_call_id = c.id
         JOIN users u ON u.id = b.user_id JOIN plivo_calls r ON r.id = u.telnyx_session_call_id
         WHERE c.telnyx_call_id = $1 AND c.disposition IS NULL AND c.duration IS NULL AND u.rep_connected
@@ -118,21 +125,22 @@ router.post('/plivo/:action', async (req, res) => {
     if (p.ConferenceAction !== 'enter' || call.ended_at) return res.sendStatus(200);
     if (call.cancelled) { await lateAnswer(); return res.sendStatus(200); }
     const joined = req.query.stage === 'joined';
-    // An inbound caller's enter is valid only in the rep's CURRENT room; a stale one died with the old rep leg.
-    if (req.query.stage === 'inbound' && call.state.kind === 'inbound') {
-      const { rows: [u] } = await q('SELECT telnyx_session_call_id FROM users WHERE id = $1', [call.state.userId]);
-      const room = u?.telnyx_session_call_id ? 'rep-' + u.telnyx_session_call_id : null;
-      if (!room || p.ConferenceName !== room || !p.ConferenceMemberID) return res.sendStatus(200);
-      await q('UPDATE plivo_calls SET conference_name = $2, member_id = $3 WHERE id = $1', [id, room, p.ConferenceMemberID]);
-      emitToUser(call.state.userId, 'inbound:caller', { phone: call.state.phone ?? null });
-      pokeAdmins('live');
-      return res.sendStatus(200);
-    }
     const room = joined ? call.bridge_room : (call.state.kind === 'rep' ? 'rep-' : 'hold-') + id;
     if (!room || p.ConferenceName !== room || !p.ConferenceMemberID) return res.sendStatus(400);
     // A delayed entry to the holding room must not overwrite the active bridge membership.
     await q(`UPDATE plivo_calls SET conference_name = $2, member_id = $3 WHERE id = $1
       AND ($4::boolean OR bridge_room IS NULL)`, [id, room, p.ConferenceMemberID, joined]);
+    // A waiting caller hears a ringback loop, so "connecting" sounds alive instead of dead air.
+    if (!joined && call.state.kind === 'inbound')
+      plivoRequest('Conference/' + encodeURIComponent(room) + '/Member/' + encodeURIComponent(p.ConferenceMemberID) + '/Play/',
+        'POST', { url: publicUrl() + '/static/ring.wav', loop: 'true' })
+        .catch((e) => console.warn('hold ringback:', e.message));
+    // A held caller landing in the rep's room: confirm on the rep's screen.
+    if (joined && call.state.kind === 'inbound') {
+      emitToUser(call.state.userId, 'inbound:live', { inboundId: id, phone: call.state.phone ?? null });
+      pokeAdmins('live');
+      return res.sendStatus(200);
+    }
     type = joined ? 'call.bridged' : 'call.answered';
   } else if (action === 'recording') {
     type = p.recording_id || p.RecordingID ? 'call.recording.saved' : 'call.recording.error';
@@ -168,6 +176,10 @@ export async function handle(event) {
   if (type === 'call.recording.saved') return onRecordingSaved(p, state);
   if (type === 'call.recording.error') return onRecordingError(p, state);
   if (!state) return;
+  if (state.kind === 'inbound') {
+    if (type === 'call.hangup') emitToUser(state.userId, 'inbound:ended', { phone: state.phone ?? null });
+    return;
+  }
   if (state.kind === 'rep') return onRepEvent(type, p, state);
   if (state.kind === 'lead') {
     const result = await withLock('voice-burst:' + state.burstId, async () => {

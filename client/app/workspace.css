@@ -340,3 +340,8 @@
 @media (prefers-reduced-motion: reduce) {
   .rep-app *, .ad-shell * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* Incoming callback: the banner pulses so an unattended screen is noticed. */
+.inbound-ring { background: var(--coral-dim, #fdecea); animation: inbound-pulse 1.2s ease-in-out infinite; }
+@keyframes inbound-pulse { 50% { filter: brightness(0.94); } }
+@media (prefers-reduced-motion: reduce) { .inbound-ring { animation: none; } }

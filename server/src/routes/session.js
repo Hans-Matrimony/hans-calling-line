@@ -8,7 +8,7 @@ import { repUp, activeBurst } from '../state.js';
 import { claimLeads, claimManual, releaseLead, pickFromNumber, sweepStuckLeads, listFromNumbers } from '../lib/queue.js';
 import { normalizePhone } from '../lib/import.js';
 import { startBurst, cancelOpenLegs, stopRepAudio, leadCard, burstLegs, previewCard } from '../lib/burst.js';
-import { dialRep, hangup, ensureCredential, webrtcToken, sipDestination, sendDtmf } from '../plivo.js';
+import { dialRep, hangup, ensureCredential, webrtcToken, sipDestination, sendDtmf, voiceCall, callbackUrl, plivoRequest } from '../plivo.js';
 import { pullBeforeRead } from '../lib/hubspot.js';
 import { LEGS_PER_BURST } from '../config.js';
 
@@ -138,6 +138,53 @@ router.post('/dtmf', async (req, res) => {
   if (!activeBurst.get(req.userId) || !u?.telnyx_session_call_id) return res.status(409).json({ error: 'Dialpad works only while a call is live.' });
   try { await sendDtmf(u.telnyx_session_call_id, digits); res.json({ ok: true }); }
   catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// ---- inbound (revert) calls: a caller waits on hold until this rep answers or rejects them ----
+const waitingInbound = async (req) => {
+  const call = await voiceCall(String(req.params.id ?? ''));
+  if (!call || call.state.kind !== 'inbound' || call.state.userId !== req.userId || call.ended_at || call.cancelled) return null;
+  return call;
+};
+const queueCallback = async (userId, phone) => {
+  await transaction(async () => {
+    const lead = await claimManual(userId, phone);
+    await q(`UPDATE leads SET status = 'queued', next_call_at = now(), attempt_count = 0 WHERE id = $1`, [lead.id]);
+  });
+  emitToUser(userId, 'queue:changed', {});
+  pokeAdmins('queue');
+};
+
+// Answer: move the held caller into this rep's CURRENT room via an aleg transfer.
+router.post('/inbound/:id/accept', async (req, res) => {
+  const call = await waitingInbound(req);
+  if (!call?.call_uuid) return res.status(409).json({ error: 'This call is no longer waiting.' });
+  const { rows: [u] } = await q('SELECT telnyx_session_call_id, rep_connected FROM users WHERE id = $1', [req.userId]);
+  if (!u?.rep_connected || !u.telnyx_session_call_id) return res.status(409).json({ error: 'Audio is not connected — press Connect first.' });
+  await q('UPDATE plivo_calls SET bridge_room = $2 WHERE id = $1', [call.id, 'rep-' + u.telnyx_session_call_id]);
+  try {
+    await plivoRequest('Call/' + encodeURIComponent(call.call_uuid) + '/', 'POST', { legs: 'aleg', aleg_url: callbackUrl('bridge', call.id), aleg_method: 'POST' });
+  } catch (e) { return res.status(502).json({ error: e.message }); }
+  emitToUser(req.userId, 'inbound:accepted', { inboundId: call.id, phone: call.state.phone });
+  res.json({ ok: true });
+});
+
+// Reject: drop the caller and keep the number as a callback lead on this rep's list.
+router.post('/inbound/:id/reject', async (req, res) => {
+  const call = await waitingInbound(req);
+  if (!call) return res.status(409).json({ error: 'This call is no longer waiting.' });
+  await hangup(call.id);
+  if (call.state.phone) await queueCallback(req.userId, call.state.phone);
+  res.json({ ok: true });
+});
+
+// End: hang up a live inbound call; the rep's own audio session stays up.
+router.post('/inbound/:id/end', async (req, res) => {
+  const call = await waitingInbound(req);
+  if (!call) return res.status(409).json({ error: 'No call to end.' });
+  await hangup(call.id);
+  emitToUser(req.userId, 'inbound:ended', { phone: call.state.phone ?? null });
+  res.json({ ok: true });
 });
 
 // Red call button: drop whatever is ringing or live for this rep. A live lead still needs its outcome.
