@@ -40,9 +40,16 @@ router.post('/plivo/inbound', async (req, res) => {
     console.log('[inbound] from', p.From, '->', from, 'uuid', uuid ? 'yes' : 'MISSING');
   const bye = (text) => res.type('text/xml').send(xml((text ? '<Speak>' + escape(text) + '</Speak>' : '') + '<Hangup/>')); // Plivo's TTS verb is <Speak>, not Twilio's <Say>
     if (!/^\+\d{6,15}$/.test(from) || typeof uuid !== 'string' || !uuid) { console.warn('[inbound] rejected:', JSON.stringify(p).slice(0, 300)); return bye('Sorry, this line could not take your call. Goodbye.'); }
+    // Route to the rep this caller knows: whoever dialled them most recently wins, both for the
+    // live bridge and for the queued callback; a stranger falls through to the first active rep.
+    const known = await q(
+      `SELECT b.user_id FROM calls c JOIN bursts b ON b.id = c.burst_id
+       JOIN users u ON u.id = b.user_id AND u.active
+       WHERE c.to_number = $1 ORDER BY c.started_at DESC LIMIT 1`, [from]);
     const { rows: [rep] } = await q(
       `SELECT id, telnyx_session_call_id FROM users
-       WHERE active AND rep_connected AND telnyx_session_call_id IS NOT NULL ORDER BY id LIMIT 1`);
+       WHERE active AND rep_connected AND telnyx_session_call_id IS NOT NULL
+       ORDER BY (id = $1) DESC, id LIMIT 1`, [known.rows[0]?.user_id ?? 0]);
     if (rep) {
       const room = 'rep-' + rep.telnyx_session_call_id;
       const members = await conferenceMembers(room).catch(() => null);
@@ -54,8 +61,8 @@ router.post('/plivo/inbound', async (req, res) => {
           escape(callbackUrl('conference', id, { stage: 'inbound' })) + '">' + escape(room) + '</Conference>'));
       }
     }
-    // Nobody free to take it: queue a callback on a rep's list so Start calling rings them back.
-    const owner = rep ?? (await q("SELECT id FROM users WHERE active AND role = 'rep' ORDER BY id LIMIT 1")).rows[0];
+    // Nobody free to take it: queue the callback with the rep the caller knows.
+    const owner = known.rows[0] ?? (await q("SELECT id FROM users WHERE active AND role = 'rep' ORDER BY id LIMIT 1")).rows[0];
     if (owner) {
       await transaction(async () => {
         const lead = await claimManual(owner.id, from);
