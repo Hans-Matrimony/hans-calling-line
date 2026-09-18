@@ -91,11 +91,14 @@ export async function hangup(id) {
 
 async function play(id, file, loop = false) {
   const call = await live(id);
-  // Conference-member playback isolates the cue to the rep's ear.
-  const path = call.member_id && call.conference_name
-    ? 'Conference/' + segment(call.conference_name) + '/Member/' + segment(call.member_id) + '/Play/'
-    : 'Call/' + segment(call.call_uuid) + '/Play/';
-  return plivoRequest(path, 'POST', { urls: publicUrl() + '/static/' + file, loop });
+  const audio = publicUrl() + '/static/' + file;
+  // Conference-member playback isolates the cue to the rep's ear. The member API takes a single
+  // `url`; the bare-leg Call API takes `urls` and understands loop 'infinity'.
+  if (call.member_id && call.conference_name)
+    return plivoRequest('Conference/' + segment(call.conference_name) + '/Member/' + segment(call.member_id) + '/Play/',
+      'POST', loop ? { url: audio, loop: 'true' } : { url: audio });
+  return plivoRequest('Call/' + segment(call.call_uuid) + '/Play/',
+    'POST', { urls: audio, ...(loop ? { loop: 'infinity' } : {}) });
 }
 export const beep = (id) => play(id, 'beep.wav');
 export const startTick = (id) => play(id, 'tick.wav', true);
