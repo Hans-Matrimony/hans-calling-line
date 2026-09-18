@@ -33,10 +33,13 @@ router.post('/plivo/application', (_req, res) => res.type('text/xml').send(hangu
 router.post('/plivo/inbound', async (req, res) => {
   try {
     const p = req.body ?? {};
-    const from = String(p.From ?? '').trim();
+    // Indian carriers hand From over both with and without the leading +: keep the digits only.
+    const digits = String(p.From ?? '').replace(/\D/g, '');
+    const from = digits ? '+' + digits.replace(/^0+(?=\d)/, '') : '';
     const uuid = p.CallUUID || p.call_uuid;
+    console.log('[inbound] from', p.From, '->', from, 'uuid', uuid ? 'yes' : 'MISSING');
   const bye = (text) => res.type('text/xml').send(xml((text ? '<Speak>' + escape(text) + '</Speak>' : '') + '<Hangup/>')); // Plivo's TTS verb is <Speak>, not Twilio's <Say>
-    if (!/^\+\d{6,15}$/.test(from) || typeof uuid !== 'string' || !uuid) return bye('Sorry, this line could not take your call. Goodbye.');
+    if (!/^\+\d{6,15}$/.test(from) || typeof uuid !== 'string' || !uuid) { console.warn('[inbound] rejected:', JSON.stringify(p).slice(0, 300)); return bye('Sorry, this line could not take your call. Goodbye.'); }
     const { rows: [rep] } = await q(
       `SELECT id, telnyx_session_call_id FROM users
        WHERE active AND rep_connected AND telnyx_session_call_id IS NOT NULL ORDER BY id LIMIT 1`);
