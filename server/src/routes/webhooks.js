@@ -54,8 +54,8 @@ router.post('/plivo/inbound', async (req, res) => {
           escape(callbackUrl('conference', id, { stage: 'inbound' })) + '">' + escape(room) + '</Conference>'));
       }
     }
-    // Nobody free to take it: queue a callback on the rep's list so Start calling rings them back.
-    const owner = rep ?? (await q('SELECT id FROM users WHERE active ORDER BY id LIMIT 1')).rows[0];
+    // Nobody free to take it: queue a callback on a rep's list so Start calling rings them back.
+    const owner = rep ?? (await q("SELECT id FROM users WHERE active AND role = 'rep' ORDER BY id LIMIT 1")).rows[0];
     if (owner) {
       await transaction(async () => {
         const lead = await claimManual(owner.id, from);
