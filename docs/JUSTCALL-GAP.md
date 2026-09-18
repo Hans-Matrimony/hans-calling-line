@@ -1,4 +1,4 @@
-# Eazybe Dialer vs JustCall Sales Dialer — gap list (2026-09-07)
+# Hans Dialer vs JustCall Sales Dialer — gap list (2026-09-07)
 
 Source: the six-lens audit (PLAN-v2 §11) plus JustCall's help centre (Sales Dialer campaign types, Power / Dynamic /
 Predictive dialer, mandatory disposition, pause campaign, dialer settings) and their web dialer's Settings screens.

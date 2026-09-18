@@ -4,9 +4,11 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 const url = process.env.DATABASE_URL;
 if (!url) throw new Error('DATABASE_URL is not set (see server/.env.example)');
 
+// Managed hosts (Railway) force TLS on remote URLs; Coolify's internal Postgres has none —
+// append ?sslmode=disable to DATABASE_URL there and it is honoured here.
 export const pool = new pg.Pool({
   connectionString: url,
-  ssl: /localhost|127[.]0[.]0[.]1/.test(url) ? false : { rejectUnauthorized: false },
+  ssl: /localhost|127[.]0[.]0[.]1|sslmode=disable|ssl=false/.test(url) ? false : { rejectUnauthorized: false },
 });
 
 const context = new AsyncLocalStorage();

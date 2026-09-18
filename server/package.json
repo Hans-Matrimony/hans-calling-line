@@ -1,8 +1,9 @@
 {
-  "name": "eazybe-dialer-server",
+  "name": "hans-dialer-server",
   "private": true,
   "type": "module",
   "scripts": {
+    "dev:db": "node scripts/dev-db.mjs",
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
     "migrate": "node src/db/migrate.js",
@@ -17,8 +18,8 @@
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.3.0",
     "pg": "^8.23.0",
-    "socket.io": "^4.8.3",
-    "telnyx": "^7.20.0"
+    "plivo": "^4.79.0",
+    "socket.io": "^4.8.3"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",

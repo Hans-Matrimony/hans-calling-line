@@ -1,109 +1,110 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { TelnyxRTC, Call, INotification } from '@telnyx/webrtc';
+import type { Client } from 'plivo-browser-sdk/client';
 
 export type SoftphoneStatus = 'off' | 'connecting' | 'ready' | 'in_call' | 'error';
-
-const EVENTS = ['telnyx.ready', 'telnyx.error', 'telnyx.socket.error', 'telnyx.socket.close', 'telnyx.notification'] as const;
+type CallInfo = { callUUID?: string };
 const LOGIN_TIMEOUT_MS = 20000;
 
-/**
- * Browser audio (plan s9). Logs the Telnyx WebRTC client in with a short-lived JWT and auto-answers
- * the rep leg the server dials to sip:<sip_username>@sip.telnyx.com. The leg stays open all session;
- * beep, bridge and hangups are driven by Call Control on the server exactly as in phone mode.
- * The SDK is imported lazily: the page is a static export and the package touches `window`.
- */
+/** The SDK is loaded only in the browser. Account credentials and SIP passwords never enter it. */
 export function useSoftphone() {
   const [status, setStatus] = useState<SoftphoneStatus>('off');
   const [muted, setMuted] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const client = useRef<TelnyxRTC | null>(null);
-  const call = useRef<Call | null>(null);
-  const connecting = useRef(false); // errors are fatal for connect() only while this is true
+  const client = useRef<Client | null>(null);
+  const activeCall = useRef<string | null>(null);
+  const generation = useRef(0);
+  const pending = useRef<{ reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> } | null>(null);
 
   const disconnect = useCallback(() => {
-    // The SDK's own disconnect() purges and BYEs every call still live and skips ones the server already
-    // ended - so no explicit call.hangup() here: sending our own BYE first made the SDK send a second one
-    // and log "telnyx_rtc.bye failed!". Handlers come off first so a torn-down client cannot report back.
-    const c = client.current;
-    client.current = null; call.current = null; connecting.current = false;
+    generation.current++;
+    const waiting = pending.current; pending.current = null;
+    if (waiting) { clearTimeout(waiting.timer); waiting.reject(new Error('Audio connection cancelled')); }
+    const c = client.current; client.current = null;
     if (c) {
-      for (const ev of EVENTS) { try { c.off(ev); } catch { /* already gone */ } }
-      try { c.disconnect(); } catch { /* already gone */ }
+      c.removeAllListeners();
+      try { if (activeCall.current) c.hangup(); } catch { /* already ended */ }
+      try { c.logout(); } catch { /* already disconnected */ }
     }
+    activeCall.current = null;
     setStatus('off'); setMuted(false);
   }, []);
 
   const connect = useCallback(async (token: string) => {
     disconnect();
-    setStatus('connecting'); setError(null); connecting.current = true;
-    // Ask for the mic now so the auto-answer below is never stuck behind a permission prompt.
+    const current = generation.current;
+    const isCurrent = () => generation.current === current;
+    setStatus('connecting'); setError(null);
     try {
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error('Browser audio needs HTTPS or localhost and a microphone.');
       const probe = await navigator.mediaDevices.getUserMedia({ audio: true });
-      probe.getTracks().forEach((t) => t.stop());
-    } catch (e) {
-      setStatus('error'); connecting.current = false;
-      const why = (e as Error).name === 'NotAllowedError' ? 'Microphone blocked - allow it for this site and try again.' : 'No microphone: ' + (e as Error).message;
-      setError(why); throw new Error(why);
+      probe.getTracks().forEach(track => track.stop());
+      if (!isCurrent()) throw new Error('Audio connection cancelled');
+      const { default: Plivo } = await import('plivo-browser-sdk');
+      if (!isCurrent()) throw new Error('Audio connection cancelled');
+      const c = new Plivo({ debug: 'ERROR', permOnClick: true, enableTracking: false, closeProtection: false }).client;
+      c.setRingTone(false); c.setConnectTone(false);
+      client.current = c;
+      await new Promise<void>((resolve, reject) => {
+        const fail = (message: string) => {
+          if (!isCurrent()) return;
+          const waiting = pending.current; pending.current = null;
+          if (waiting) { clearTimeout(waiting.timer); waiting.reject(new Error(message)); }
+          setError(message); setStatus('error');
+        };
+        const timer = setTimeout(() => fail('Audio login timed out after 20 seconds.'), LOGIN_TIMEOUT_MS);
+        pending.current = { reject, timer };
+        c.on('onLogin', () => {
+          console.log('[softphone] onLogin');
+          if (!isCurrent()) return;
+          clearTimeout(timer); pending.current = null; setStatus('ready'); setError(null); resolve();
+        });
+        c.on('onLoginFailed', (code: number) => { console.log('[softphone] onLoginFailed', code); fail(c.getErrorStringByErrorCodes(code) || 'Plivo audio login failed.'); });
+        c.on('onConnectionChange', (info: { state?: string }) => {
+          console.log('[softphone] onConnectionChange', info?.state);
+          if (!isCurrent() || info.state !== 'disconnected') return;
+          fail('Audio connection lost. Press Connect to reconnect.');
+        });
+        c.on('onIncomingCall', (_caller: string, _headers: unknown, info: CallInfo) => {
+          console.log('[softphone] onIncomingCall', info?.callUUID);
+          if (!isCurrent() || !info?.callUUID) return;
+          if (activeCall.current) { c.reject(info.callUUID); return; }
+          activeCall.current = info.callUUID;
+          if (!c.answer(info.callUUID, 'reject')) { activeCall.current = null; fail('Could not answer the audio connection.'); }
+        });
+        c.on('onCallAnswered', (info: CallInfo) => {
+          if (!isCurrent() || info?.callUUID !== activeCall.current) return;
+          setStatus('in_call'); setError(null);
+        });
+        const ended = (info: CallInfo) => {
+          if (!isCurrent() || info?.callUUID !== activeCall.current) return;
+          activeCall.current = null; setMuted(false); setStatus('ready');
+        };
+        c.on('onCallTerminated', (_cause: unknown, info: CallInfo) => ended(info));
+        c.on('onIncomingCallCanceled', ended);
+        c.on('onCallFailed', (cause: string, info: CallInfo) => { ended(info); if (isCurrent()) setError(String(cause || 'Audio call failed.')); });
+        c.on('onMediaPermission', (event: { status?: string; error?: string }) => {
+          if (event.status === 'failure') fail('Microphone unavailable: ' + (event.error || 'check browser permission'));
+        });
+        c.on('onWebrtcNotSupported', () => fail('This browser does not support audio calling.'));
+        if (!c.loginWithAccessToken(token)) fail('Plivo rejected the audio login request.');
+      });
+    } catch (cause) {
+      if (isCurrent()) {
+        disconnect();
+        const message = (cause as Error).name === 'NotAllowedError'
+          ? 'Microphone blocked. Allow it for this site and try again.' : (cause as Error).message;
+        setStatus('error'); setError(message);
+      }
+      throw cause;
     }
-
-    const { TelnyxRTC } = await import('@telnyx/webrtc');
-    const c = new TelnyxRTC({ login_token: token });
-    c.remoteElement = 'remoteMedia';
-    client.current = c;
-    const isCurrent = () => client.current === c; // a reconnect swaps the client; the old one's late events are ignored
-
-    await new Promise<void>((resolve, reject) => {
-      const fail = (text: string, e?: unknown) => {
-        console.warn('[softphone]', text, e ?? '');
-        setStatus('error'); setError(text); connecting.current = false; reject(new Error(text));
-      };
-      // Belt and braces: whatever the SDK's event order, connect() settles, so the UI never wedges on `busy`.
-      const timer = setTimeout(() => { if (!isCurrent() || !connecting.current) return; disconnect(); fail('softphone: login timed out after 20s'); }, LOGIN_TIMEOUT_MS);
-      // The SDK wraps errors: telnyx.error -> { error: { message, code }, sessionId }. socket.error is a raw Event.
-      const describe = (e: unknown) => {
-        const inner = (e as { error?: { message?: string; code?: string | number } })?.error ?? (e as { message?: string });
-        const code = (inner as { code?: string | number })?.code;
-        return inner?.message ? `${inner.message}${code != null ? ' (' + code + ')' : ''}` : 'unknown';
-      };
-      const onError = (kind: string, e: unknown) => {
-        if (!isCurrent()) return;
-        const text = `${kind}: ${describe(e)}`;
-        if (connecting.current) { clearTimeout(timer); fail(text, e); return; } // login failed: fatal for connect()
-        // 44003 "Failed to hang up cleanly": the SDK BYEd a leg the server had already ended (previous lead gone while
-        // the rep leg sits parked). The call is over either way and there is nothing for the rep to do - keep it off the screen.
-        if (/Failed to hang up cleanly/i.test(text) || /44003/.test(text)) { console.warn('[softphone] benign:', text, e); return; }
-        console.warn('[softphone]', text, e); setError(text);           // live client: always surfaced
-      };
-      c.on('telnyx.ready', () => { if (!isCurrent()) return; clearTimeout(timer); connecting.current = false; setStatus('ready'); resolve(); });
-      c.on('telnyx.error', (e: unknown) => onError('softphone error', e));
-      c.on('telnyx.socket.error', (e: unknown) => onError('cannot reach rtc.telnyx.com (firewall/VPN?)', e));
-      c.on('telnyx.socket.close', () => {
-        if (!isCurrent()) return;
-        if (connecting.current) { clearTimeout(timer); fail('softphone: connection closed before login'); return; }
-        call.current = null; setStatus('off');
-      });
-      c.on('telnyx.notification', (n: INotification) => {
-        if (!isCurrent()) return;
-        if (n.type === 'userMediaError') { setStatus('error'); setError('Microphone unavailable: ' + (n.error?.message ?? '')); return; }
-        if (n.type !== 'callUpdate' || !n.call) return;
-        const k = n.call;
-        switch (k.state) {
-          case 'ringing': call.current = k; setError(null); k.answer(); break;       // the rep leg: answer, stay on it; a stale error from the last call is history
-          case 'active': call.current = k; setError(null); setStatus('in_call'); break;
-          case 'hangup': case 'destroy': call.current = null; setMuted(false); setStatus((s) => (s === 'off' ? s : 'ready')); break;
-        }
-      });
-      c.connect();
-    });
   }, [disconnect]);
 
   const toggleMute = useCallback(() => {
-    const k = call.current; if (!k) return;
-    if (muted) k.unmuteAudio(); else k.muteAudio();
+    const c = client.current;
+    if (!c || !activeCall.current) return;
+    if (muted) c.unmute(); else c.mute();
     setMuted(!muted);
   }, [muted]);
-
   useEffect(() => () => disconnect(), [disconnect]);
-
   return { status, muted, error, connect, disconnect, toggleMute };
 }

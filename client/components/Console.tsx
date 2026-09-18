@@ -20,8 +20,8 @@ const TABS: { id: Tab; label: string; icon: IconC }[] = [
 /** Per-viewer UI preference: which tab was open. Never critical: falls back to the dialer. */
 function useTab(): [Tab, (t: Tab) => void] {
   const [tab, setTabState] = useState<Tab>('dialer');
-  useEffect(() => { try { const s = localStorage.getItem('eazybe.tab'); if (TAB_IDS.includes(s as Tab)) setTabState(s as Tab); } catch { /* private mode etc. */ } }, []);
-  const setTab = (t: Tab) => { setTabState(t); try { localStorage.setItem('eazybe.tab', t); } catch { /* ignore */ } };
+  useEffect(() => { try { const s = localStorage.getItem('hans.tab'); if (TAB_IDS.includes(s as Tab)) setTabState(s as Tab); } catch { /* private mode etc. */ } }, []);
+  const setTab = (t: Tab) => { setTabState(t); try { localStorage.setItem('hans.tab', t); } catch { /* ignore */ } };
   return [tab, setTab];
 }
 
@@ -60,7 +60,7 @@ export default function Console({ me, onLogout }: { me: Me; onLogout: () => void
     <div className="app rep-app">
       <a className="cw-skip" href="#workspace-main">Skip to workspace</a>
       <nav className="side" aria-label="Main">
-        <div className="brand"><span className="brand-name">Eazybe</span><span className="brand-sub">dialer</span></div>
+        <div className="brand"><span className="brand-name">Hans</span><span className="brand-sub">dialer</span></div>
         <span className="cw-nav-label">Workspace</span>
         {TABS.map((t) => (
           <button key={t.id} className={'nav' + (tab === t.id ? ' on' : '')} onClick={() => setTab(t.id)} aria-current={tab === t.id ? 'page' : undefined}>

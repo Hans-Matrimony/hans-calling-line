@@ -1,4 +1,4 @@
--- Eazybe Dialer MVP schema (plan §6, plus `bursts` to settle the bridge race)
+-- Hans Dialer MVP schema (plan §6, plus `bursts` to settle the bridge race)
 
 CREATE TABLE IF NOT EXISTS users (
   id                      SERIAL PRIMARY KEY,
@@ -64,7 +64,7 @@ ALTER TABLE leads ADD COLUMN IF NOT EXISTS extra JSONB NOT NULL DEFAULT '{}'::js
 -- activity feed are all scoped by it. Rows from before ownership existed go to the first rep, once.
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS user_id INT REFERENCES users(id);
 CREATE INDEX IF NOT EXISTS leads_owner_idx ON leads (user_id, status, next_call_at);
-UPDATE leads SET user_id = (SELECT id FROM users WHERE email = 'himanshu@eazybe.com') WHERE user_id IS NULL;
+UPDATE leads SET user_id = (SELECT id FROM users WHERE email = 'himanshu@hansmatrimony.com') WHERE user_id IS NULL;
 
 -- When the rep saved the outcome: wrap-up time = dispositioned_at - (answered_at + duration). Manual Next
 -- makes this the one number the measurement day should see (PLAN-v2).
@@ -93,7 +93,7 @@ UPDATE leads SET phones = ARRAY[phone] WHERE cardinality(phones) = 0;
 ALTER TABLE calls ADD COLUMN IF NOT EXISTS sub_outcome TEXT;
 ALTER TABLE calls ADD COLUMN IF NOT EXISTS reason      TEXT;
 
--- HubSpot inlet (docs/HUBSPOT-QUEUE.md). A rep ticks `eazybe_dial_queue` on a contact they own and a
+-- HubSpot inlet (docs/HUBSPOT-QUEUE.md). A rep ticks `hans_dial_queue` on a contact they own and a
 -- poll pulls it into that rep's queue. Live toggle: unticking removes a queued lead, re-ticking brings
 -- it back. Owner id and user id are both kept because HubSpot's two id spaces disagree for some users
 -- (Karan Dewan is owner 578081029 but user 61259763); owners are matched to reps by email, never hardcoded.
@@ -136,13 +136,13 @@ UPDATE leads m SET status = 'stopped', stopped_reason = 'duplicate'
 
 -- ===== Admin dashboard, wallet, recordings, HubSpot call logging (plan 2026-09-10) =====
 
--- Roles: reps are the default; one admin (marketing@eazybe.com) sees every rep and never dials.
+-- Roles: reps are the default; one admin (marketing@hansmatrimony.com) sees every rep and never dials.
 -- Removing a rep deactivates them (login refused, rep leg hung up) and keeps every lead and call.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS role           TEXT NOT NULL DEFAULT 'rep' CHECK (role IN ('rep', 'admin'));
 ALTER TABLE users ADD COLUMN IF NOT EXISTS active         BOOLEAN NOT NULL DEFAULT true;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at     TIMESTAMPTZ NOT NULL DEFAULT now();
 ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMPTZ;
-UPDATE users SET role = 'admin' WHERE email = 'marketing@eazybe.com' AND role <> 'admin';
+UPDATE users SET role = 'admin' WHERE email = 'marketing@hansmatrimony.com' AND role <> 'admin';
 
 -- When a leg ended, answered or not: ring time for a no-answer is ended_at - started_at.
 -- duration stays talk time and stays NULL on unanswered legs, so nothing that reads it changes.
@@ -219,3 +219,20 @@ ALTER TABLE calls ADD COLUMN IF NOT EXISTS hubspot_create_started_at TIMESTAMPTZ
 ALTER TABLE users ADD COLUMN IF NOT EXISTS rep_connected BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS timezone TEXT;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS retry_minutes INT;
+
+-- Plivo uses a request UUID before the live call UUID is assigned. The stable local ID
+-- is stored in the existing telnyx_call_id/session columns; historical rows are untouched.
+CREATE TABLE IF NOT EXISTS plivo_calls (
+  id TEXT PRIMARY KEY,
+  request_uuid TEXT UNIQUE,
+  call_uuid TEXT UNIQUE,
+  state JSONB NOT NULL,
+  conference_name TEXT,
+  member_id TEXT,
+  bridge_room TEXT,
+  cancelled BOOLEAN NOT NULL DEFAULT false,
+  ended_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS plivo_endpoint_id TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS plivo_sip_username TEXT;

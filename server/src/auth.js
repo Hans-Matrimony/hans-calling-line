@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { q } from './db/pool.js';
 
-export const COOKIE = 'eazybe_session';
+export const COOKIE = 'hans_session';
 const SECRET = process.env.SESSION_SECRET;
 if (!SECRET) throw new Error('SESSION_SECRET is not set');
 

@@ -6,8 +6,8 @@ Audited 2026-09-07 against the live Telnyx account (read-only API), plus Telnyx'
 
 | Number | Country | Type | Status | Connection |
 |---|---|---|---|---|
-| +1 302 417 0301 | US (Delaware) | local | active | eazybe-dialer |
-| +1 315 597 0155 | US (New York) | local | active | eazybe-dialer |
+| +1 302 417 0301 | US (Delaware) | local | active | hans-dialer |
+| +1 315 597 0155 | US (New York) | local | active | hans-dialer |
 
 That is the whole inventory — **two US numbers, nothing else**. `FROM_NUMBER_EU` and
 `FROM_NUMBER_INDIA` are blank in `server/.env`, so `pickFromNumber()` falls through to
@@ -25,12 +25,12 @@ Balance: **$8.32**, credit limit $0, no daily spend limit on the profile.
 
 ## 3. Gate 1 — the whitelist is wide open, but wired to the wrong profile
 
-The Call Control app `eazybe-dialer` (`3042168655686141391`) points at the OVP named
+The Call Control app `hans-dialer` (`3042168655686141391`) points at the OVP named
 **"Default"** (`2919259967326258179`): **all 255 destinations** whitelisted, plus the five
 special destinations (`uitf`, `inmarsat`, `gmss`, `intlnetworks`, `upt`), no concurrent-call
 limit, `service_plan: global`.
 
-The purpose-built OVP **"eazybe-dialer"** (`3042244496378038171`, 84 destinations,
+The purpose-built OVP **"hans-dialer"** (`3042244496378038171`, 84 destinations,
 concurrency 10) exists but **is attached to nothing**.
 
 **So right now no country is blocked by whitelist.** But this is fragile:

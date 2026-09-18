@@ -4,7 +4,7 @@ import type { HubSpot, QueueGroup, QueueLead, QueueOverview } from '../lib/useDi
 import { emptyQueue, OUTCOME_LABEL, clock, describeLater, describePull, leadWho, listCountries, localTime, prettyPhone, relative, since } from '../lib/format';
 import TimeBar from './TimeBar';
 
-/** The second inlet, in one line. Reps tick "Eazybe · Dial queue" on a contact in HubSpot and it lands
+/** The second inlet, in one line. Reps tick "Hans · Dial queue" on a contact in HubSpot and it lands
  *  here; nothing in this strip is a step they have to take. It exists to answer "I ticked it — is it
  *  here yet?" (what the last pull brought, and when we last looked), and to say so loudly when the inlet
  *  itself is broken (bad token, missing scope, the checkbox property was never created) — a broken inlet

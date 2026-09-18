@@ -1,4 +1,4 @@
-// Generates the rep-leg cue sounds in server/public as 8 kHz 16-bit mono WAV (what Telnyx plays best).
+// Generates the rep-leg cue sounds in server/public as 8 kHz 16-bit mono WAV (what telephony providers play best).
 // Run from server/: node scripts/gen-sounds.mjs
 // The server uploads these to Telnyx Media Storage on boot (telnyx.js ensureCues) and plays them by name,
 // so after regenerating one, delete it there once (telnyx().media.delete(name)) or the old sound keeps playing.
@@ -35,7 +35,7 @@ function wav(samples) {
 }
 
 const sounds = {
-  // Dialing in progress: one quiet tick every 2 s (looped by Telnyx). Low enough to keep writing notes.
+  // Dialing in progress: one quiet tick every 2 s (looped. Low enough to keep writing notes.
   'tick.wav': concat([tone(900, 50, 0.18), silence(1950)]),
   // Lead answered, you are about to be bridged: rising two-tone, clearly different from the tick.
   'beep.wav': concat([tone(700, 140, 0.6), tone(1050, 160, 0.6)]),

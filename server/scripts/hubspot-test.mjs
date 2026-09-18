@@ -2,7 +2,7 @@
 // `scratch` schema, with HubSpot itself stubbed at the fetch layer. Places no calls and needs no
 // HUBSPOT_TOKEN. Usage (from server/):
 //   node scripts/hubspot-test.mjs
-if (process.env.EAZYBE_TEST_DATABASE !== 'isolated') throw new Error('Run npm test from server/ to use the disposable database.');
+if (process.env.HANS_TEST_DATABASE !== 'isolated') throw new Error('Run npm test from server/ to use the disposable database.');
 import { readFileSync } from 'node:fs';
 
 const base = process.env.DATABASE_URL;
@@ -10,13 +10,13 @@ process.env.DATABASE_URL = base + (base.includes('?') ? '&' : '?') + 'options=' 
 process.env.HUBSPOT_TOKEN = 'pat-test';
 
 // --- the fake portal --------------------------------------------------------------------------
-// Shaped from the real Eazybe portal (id 40009480): no hs_calculated_* properties, lead status and
+// Shaped from the real Hans portal (id 40009480): no hs_calculated_* properties, lead status and
 // lifecycle stage stored as internal values, owner ids and user ids that disagree for some people.
 let PROPS = ['firstname', 'lastname', 'phone', 'mobilephone', 'country', 'email', 'company', 'jobtitle',
-  'lifecyclestage', 'hs_lead_status', 'hubspot_owner_id', 'hs_updated_by_user_id', 'eazybe_dial_queue'];
+  'lifecyclestage', 'hs_lead_status', 'hubspot_owner_id', 'hs_updated_by_user_id', 'hans_dial_queue'];
 const OWNERS = [
-  { id: '94828863', userId: '94828863', email: 'himanshu@eazybe.com' },
-  { id: '578081029', userId: '61259763', email: 'karan@eazybe.com' }, // the two id spaces disagree
+  { id: '94828863', userId: '94828863', email: 'himanshu@hansmatrimony.com' },
+  { id: '578081029', userId: '61259763', email: 'karan@hansmatrimony.com' }, // the two id spaces disagree
 ];
 let CONTACTS = [];
 const calls = { search: 0 };
@@ -62,7 +62,7 @@ const ok = (label, got, want) => {
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${label}${pass ? '' : `\n        got  ${JSON.stringify(got)}\n        want ${JSON.stringify(want)}`}`);
 };
 
-const contact = (id, props) => ({ id, properties: { hubspot_owner_id: '94828863', eazybe_dial_queue: 'true', ...props } });
+const contact = (id, props) => ({ id, properties: { hubspot_owner_id: '94828863', hans_dial_queue: 'true', ...props } });
 const lead = (hsId) => q(
   `SELECT status, stopped_reason, attempt_count, source, name, phones, country, utc_offset, segment, extra
    FROM leads WHERE hubspot_contact_id = $1`, [hsId]).then((r) => r.rows[0]);
@@ -72,7 +72,7 @@ const counts = (r) => ({ added: r.added, resumed: r.resumed, reopened: r.reopene
 await q('DROP SCHEMA IF EXISTS scratch CASCADE');
 await q('CREATE SCHEMA scratch');
 await q(readFileSync(new URL('../sql/schema.sql', import.meta.url), 'utf8'));
-const { rows: [u] } = await q(`INSERT INTO users (email, password_hash) VALUES ('himanshu@eazybe.com', 'x') RETURNING id`);
+const { rows: [u] } = await q(`INSERT INTO users (email, password_hash) VALUES ('himanshu@hansmatrimony.com', 'x') RETURNING id`);
 const uid = u.id;
 
 // --- 1. owners are matched by email, both id spaces kept ---------------------------------------
@@ -108,11 +108,11 @@ const held = await lead('101');
 ok('attempts kept while current CRM fields refresh', [held.attempt_count, held.name], [1, 'Renamed In HubSpot Corcoran']);
 
 // --- 4. untick removes it, re-tick puts it back exactly as it was ------------------------------
-CONTACTS[0].properties.eazybe_dial_queue = 'false';
+CONTACTS[0].properties.hans_dial_queue = 'false';
 ok('untick removes it from the queue', counts(await hubspot.pullQueue(uid)), { added: 0, resumed: 0, reopened: 0, removed: 1, skipped: 1 });
 ok('stopped, and we know why', [(await lead('101')).status, (await lead('101')).stopped_reason], ['stopped', 'hubspot_untick']);
 
-CONTACTS[0].properties.eazybe_dial_queue = 'true';
+CONTACTS[0].properties.hans_dial_queue = 'true';
 ok('re-tick puts it back', counts(await hubspot.pullQueue(uid)), { added: 0, resumed: 1, reopened: 0, removed: 0, skipped: 1 });
 const back = await lead('101');
 ok('back as it was: queued, attempts intact', [back.status, back.stopped_reason, back.attempt_count], ['queued', null, 1]);
@@ -120,10 +120,10 @@ ok('back as it was: queued, attempts intact', [back.status, back.stopped_reason,
 // --- 5. a booked callback comes back a callback, not a plain queued lead -----------------------
 const id104 = (await q(`SELECT id FROM leads WHERE hubspot_contact_id = '104'`)).rows[0].id;
 await releaseLead(id104, 'later', new Date(Date.now() + 864e5).toISOString());
-CONTACTS[3].properties.eazybe_dial_queue = 'false';
+CONTACTS[3].properties.hans_dial_queue = 'false';
 await hubspot.pullQueue(uid);
 ok('unticking a booked callback is remembered as one', (await lead('104')).stopped_reason, 'hubspot_untick_later');
-CONTACTS[3].properties.eazybe_dial_queue = 'true';
+CONTACTS[3].properties.hans_dial_queue = 'true';
 await hubspot.pullQueue(uid);
 ok('re-tick restores "later", not "queued"', (await lead('104')).status, 'later');
 
@@ -134,10 +134,10 @@ ok('connected, still ticked: left alone', counts(await hubspot.pullQueue(uid)), 
 ok('still connected', (await lead('102')).status, 'connected');
 
 // --- 7. ...but untick + re-tick is how the rep asks for another run ----------------------------
-CONTACTS[1].properties.eazybe_dial_queue = 'false';
+CONTACTS[1].properties.hans_dial_queue = 'false';
 await hubspot.pullQueue(uid);   // absent: a finished lead is not touched by the untick sweep
 ok('finished lead untouched by the untick sweep', (await lead('102')).status, 'connected');
-CONTACTS[1].properties.eazybe_dial_queue = 'true';
+CONTACTS[1].properties.hans_dial_queue = 'true';
 ok('re-tick re-opens it', counts(await hubspot.pullQueue(uid)), { added: 0, resumed: 0, reopened: 1, removed: 0, skipped: 1 });
 const rerun = await lead('102');
 ok('fresh run: queued, attempts back to zero', [rerun.status, rerun.attempt_count], ['queued', 0]);
@@ -153,7 +153,7 @@ ok('first-ever tick on a finished CSV lead re-queues it', counts(await hubspot.p
 const old = await lead('109');
 ok('fresh attempt budget, now HubSpot-governed', [old.status, old.attempt_count, old.source], ['queued', 0, 'hubspot']);
 ok('and only once', counts(await hubspot.pullQueue(uid)).reopened, 0);
-CONTACTS.at(-1).properties.eazybe_dial_queue = 'false';
+CONTACTS.at(-1).properties.hans_dial_queue = 'false';
 ok('untick then removes it like any other ticked lead', counts(await hubspot.pullQueue(uid)).removed, 1);
 CONTACTS.pop();
 
@@ -166,16 +166,16 @@ ok('the connected lead stayed connected', (await lead('102')).status, 'connected
 
 // --- 9. an in-flight lead is never pulled out from under a live call ---------------------------
 await q(`UPDATE leads SET status = 'in_flight' WHERE hubspot_contact_id = '101'`);
-CONTACTS[0].properties.eazybe_dial_queue = 'false';
+CONTACTS[0].properties.hans_dial_queue = 'false';
 ok('untick during a call removes nothing', counts(await hubspot.pullQueue(uid)), { added: 0, resumed: 0, reopened: 0, removed: 0, skipped: 1 });
 ok('the live lead is still in flight', (await lead('101')).status, 'in_flight');
 await q(`UPDATE leads SET status = 'queued' WHERE hubspot_contact_id = '101'`);
 
 // --- 10. an unowned contact the rep last touched still reaches them ----------------------------
-CONTACTS.push({ id: '105', properties: { eazybe_dial_queue: 'true', hs_updated_by_user_id: '94828863', firstname: 'Unassigned', phone: '+12025550185' } });
+CONTACTS.push({ id: '105', properties: { hans_dial_queue: 'true', hs_updated_by_user_id: '94828863', firstname: 'Unassigned', phone: '+12025550185' } });
 await hubspot.pullQueue(uid);
 ok('unowned but last touched by this rep: routed to them', (await lead('105'))?.status, 'queued');
-CONTACTS.push({ id: '106', properties: { eazybe_dial_queue: 'true', hubspot_owner_id: '578081029', firstname: 'Someone Else', phone: '+12025550186' } });
+CONTACTS.push({ id: '106', properties: { hans_dial_queue: 'true', hubspot_owner_id: '578081029', firstname: 'Someone Else', phone: '+12025550186' } });
 await hubspot.pullQueue(uid);
 ok("another rep's ticked contact stays out of this queue", await lead('106'), undefined);
 
@@ -236,11 +236,11 @@ CONTACTS.splice(-2, 2);
 await hubspot.pullQueue(uid);
 
 // --- 13. a broken inlet says so in plain words -------------------------------------------------
-PROPS = PROPS.filter((p) => p !== 'eazybe_dial_queue');
+PROPS = PROPS.filter((p) => p !== 'hans_dial_queue');
 const fresh = await import('../src/lib/hubspot.js?missing-property');   // fresh module: empty schema cache
 const err = await fresh.pullQueue(uid).then(() => null, (e) => e.message);
 ok('missing checkbox property is reported, not swallowed', err,
-  'HubSpot is missing the "Eazybe · Dial queue" checkbox — create it on contacts with the internal name eazybe_dial_queue.');
+  'HubSpot is missing the "Hans · Dial queue" checkbox — create it on contacts with the internal name hans_dial_queue.');
 ok('and it is surfaced as unhealthy, not as an empty queue', fresh.status().ok, false);
 
 // --- 14. cost: one search per pull, not one per contact ----------------------------------------

@@ -40,7 +40,7 @@ export function CallTable({ rows, onLead, showRep = true, showDay = true }: { ro
                 <td className="act" onClick={(e) => e.stopPropagation()}>
                   {rec === 'saved' && r.recording_token
                     ? <button className={'ad-play' + (playing === r.id ? ' on' : '')} title={`Play recording${r.recording_secs ? ' · ' + secs(r.recording_secs) : ''}`} aria-label="Play recording" onClick={() => setPlaying(playing === r.id ? null : r.id)}><Play /></button>
-                    : rec === 'started' ? <span className="dim" title="Telnyx has not delivered the file yet">recording…</span>
+                    : rec === 'started' ? <span className="dim" title="Plivo has not delivered the file yet">recording…</span>
                     : rec === 'error' ? <span className="ad-pill coral" title={r.hubspot_error ?? 'recording failed'}>failed</span>
                     : <span className="dim">—</span>}
                 </td>

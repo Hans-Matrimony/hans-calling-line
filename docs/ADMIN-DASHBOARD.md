@@ -1,6 +1,6 @@
 # Admin dashboard — design (2026-09-09, for review)
 
-**Who:** one admin login, `marketing@eazybe.com`, role `admin`. Sees every rep. Reps see nothing new.
+**Who:** one admin login, `marketing@hansmatrimony.com`, role `admin`. Sees every rep. Reps see nothing new.
 **Job:** answer "is the dialer working, and who is working it" — then let the admin open any call.
 **Mockup:** the published artifact (link in chat) shows all four screens with today's real numbers.
 
@@ -159,7 +159,7 @@ numbers are searched in HubSpot by phone first, and a contact is created only wh
 | Tests | `server/scripts/admin-test.mjs` — 40 assertions over cost, recording, metrics, HubSpot logging, with Telnyx and HubSpot stubbed |
 | Schema | appended to `server/sql/schema.sql`; applied on every deploy by the root `npm start` |
 
-Owner-side, still open at build time: create the admin login (`node scripts/add-user.js marketing@eazybe.com <password> "" admin`);
-add `crm.objects.contacts.write` and `files` to the private app; create the `eazybe_dial_queue` checkbox; create the five call
+Owner-side, still open at build time: create the admin login (`node scripts/add-user.js marketing@hansmatrimony.com <password> "" admin`);
+add `crm.objects.contacts.write` and `files` to the private app; create the `hans_dial_queue` checkbox; create the five call
 types (Interested, Follow-up, Callback, Not interested, Not qualified) under Settings → Calling → Call Setup → Track Call and
 Meeting Types; fix the three reps whose dialer email is not their HubSpot email (himanshu, jeaneth, mayank showed "not matched").

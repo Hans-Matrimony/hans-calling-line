@@ -9,14 +9,14 @@ const http = require('node:http');
 const F = require('./fixtures.cjs');
 const root = path.resolve(__dirname, '..');
 const out = path.join(root, '.ui-test');
-const shots = path.resolve(root, '../docs/ui-implementation');
+const shots = process.env.UI_TEST_OUTPUT ? path.resolve(process.env.UI_TEST_OUTPUT) : path.resolve(root, '../docs/ui-implementation');
 const w = require('next/dist/compiled/webpack/webpack'); w.init();
 const bundled = process.env.CODEX_NODE_MODULES || path.join(process.env.USERPROFILE || '', '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules');
 let playwright;
 try { playwright = require('playwright'); } catch { playwright = require(path.join(bundled, 'playwright')); }
 const checks = [];
 const check = (name, condition = true) => { assert.ok(condition, name); checks.push(name); console.log('PASS ' + name); };
-const html = '<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/fonts.css"><link rel="stylesheet" href="/globals.css"><link rel="stylesheet" href="/admin.css"><link rel="stylesheet" href="/workspace.css"><style>:root{--font-hanken:"Hanken Grotesk";--font-saira:"Saira Semi Condensed";--font-plex-mono:"IBM Plex Mono"}</style><title>Eazybe UI test</title></head><body><div id="root"></div><script src="/bundle.js"></script></body></html>';
+const html = '<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/fonts.css"><link rel="stylesheet" href="/globals.css"><link rel="stylesheet" href="/admin.css"><link rel="stylesheet" href="/workspace.css"><style>:root{--font-hanken:"Hanken Grotesk";--font-saira:"Saira Semi Condensed";--font-plex-mono:"IBM Plex Mono"}</style><title>Hans UI test</title></head><body><div id="root"></div><script src="/bundle.js"></script></body></html>';
 async function bundle() {
   fs.mkdirSync(out, { recursive: true }); fs.mkdirSync(shots, { recursive: true });
   const compiler = w.webpack({ mode: 'development', devtool: false, entry: path.join(__dirname, 'entry.cjs'), output: { path: out, filename: 'bundle.js' },
@@ -39,14 +39,14 @@ async function main() {
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   let browser;
   try {
-    browser = await playwright.chromium.launch({ headless: true });
+    browser = await playwright.chromium.launch({ headless: true, channel: process.env.PLAYWRIGHT_CHANNEL || undefined });
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     await page.addInitScript(() => {
       const params = new URLSearchParams(location.search);
       if (sessionStorage.getItem('test-case') !== params.get('case')) {
         sessionStorage.clear(); localStorage.clear();
         sessionStorage.setItem('test-case', params.get('case'));
-        localStorage.setItem('eazybe.tab', params.get('tab') || 'auto');
+        localStorage.setItem('hans.tab', params.get('tab') || 'auto');
       }
     });
     const errors = []; const blocked = []; const unknown = [];
@@ -140,7 +140,7 @@ async function main() {
     await page.locator('.cw-saved').waitFor();
     check('Saved confirmation keeps the completed lead visible', (await page.locator('.cw-person-name h2').textContent()) === 'Maya Patel');
     check('Save never starts the next call', dialWrites().length === 0);
-    check('Saved draft is removed from tab storage', await page.evaluate(() => !sessionStorage.getItem('eazybe.note.1.101')));
+    check('Saved draft is removed from tab storage', await page.evaluate(() => !sessionStorage.getItem('hans.note.1.101')));
     await screenshot('saved-desktop');
     await page.getByRole('button', { name: 'Next lead', exact: true }).click();
     await page.locator('.cw-ringing').waitFor();

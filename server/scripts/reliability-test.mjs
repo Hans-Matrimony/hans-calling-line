@@ -7,7 +7,7 @@ import pg from 'pg';
 
 // Invoked by test-local.mjs, whose database exists only for this child process.
 assert.match(process.env.DATABASE_URL, /127\.0\.0\.1|localhost/);
-Object.assign(process.env, { TELNYX_API_KEY: 'test', TELNYX_PUBLIC_KEY: 'test', PUBLIC_URL: 'https://dialer.test',
+Object.assign(process.env, { PLIVO_AUTH_ID: 'MAtest', PLIVO_AUTH_TOKEN: 'test-token', PUBLIC_URL: 'https://dialer.test',
   HUBSPOT_TOKEN: '', RECORD_CALLS: 'false', SESSION_SECRET: 'isolated-test-secret' });
 const realFetch = globalThis.fetch;
 let createMode = 'ok', patchFails = false, searchFails = false, creates = 0, patches = 0;
@@ -15,7 +15,7 @@ const remoteCalls = [];
 globalThis.fetch = async (url, init = {}) => {
   const path = String(url);
   if (path.startsWith('http://127.0.0.1:')) return realFetch(url, init);
-  if (path.startsWith('https://api.telnyx.com/')) return Response.json({ data: { result: 'ok' } });
+  if (path.startsWith('https://api.plivo.com/')) return Response.json({ data: { result: 'ok' } });
   if (path.includes('/properties/calls/hs_call_disposition')) return Response.json({ options: [] });
   if (path.endsWith('/objects/calls/search')) {
     if (searchFails) return Response.json({ message: 'forbidden' }, { status: 403 });
@@ -41,7 +41,7 @@ const { snapshot, reserveBurst } = await import('../src/lib/sessionState.js');
 const { activeBurst, repUp } = await import('../src/state.js');
 const { storeEvent, processEvent } = await import('../src/lib/webhookInbox.js');
 const { handle } = await import('../src/routes/webhooks.js');
-const { encodeState } = await import('../src/telnyx.js');
+const { encodeState } = await import('../src/plivo.js');
 const { reconcileLead } = await import('../src/lib/hubspotReconcile.js');
 const { logCall, processCallSync } = await import('../src/lib/hubspotCalls.js');
 const { releaseLead, queueOverview } = await import('../src/lib/queue.js');
@@ -82,7 +82,7 @@ await new Promise((resolve) => http.once('listening', resolve));
 const post = async (path, body, userId = uid) => {
   const token = jwt.sign({ uid: userId }, process.env.SESSION_SECRET);
   return realFetch(`http://127.0.0.1:${http.address().port}/session/${path}`, { method: 'POST',
-    headers: { 'content-type': 'application/json', cookie: 'eazybe_session=' + token }, body: JSON.stringify(body) });
+    headers: { 'content-type': 'application/json', cookie: 'hans_session=' + token }, body: JSON.stringify(body) });
 };
 
 try {

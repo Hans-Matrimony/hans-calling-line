@@ -19,7 +19,7 @@ export default function Login({ onDone }: { onDone: () => void }) {
   return (
     <main className="center">
       <form className="login" onSubmit={submit}>
-        <div className="brand"><span className="brand-name">Eazybe</span><span className="brand-sub">dialer</span></div>
+        <div className="brand"><span className="brand-name">Hans</span><span className="brand-sub">dialer</span></div>
         <label>Email<input className="field" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus required autoComplete="username" /></label>
         <label>Password<input className="field" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" /></label>
         {err && <p className="err">{err}</p>}

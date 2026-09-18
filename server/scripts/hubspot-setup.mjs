@@ -1,7 +1,7 @@
 // Idempotent HubSpot provisioning for the dialer. Run after HUBSPOT_TOKEN is in server/.env:
 //   node scripts/hubspot-setup.mjs
 // 1. Reports what the private app's token is actually allowed to do (one probe per scope).
-// 2. Creates the "Eazybe dialer" property group and the `eazybe_dial_queue` checkbox - the inlet.
+// 2. Creates the "Hans dialer" property group and the `hans_dial_queue` checkbox - the inlet.
 // 3. Checks the call dispositions the write-back maps onto, and says what still needs doing by hand.
 // Writes nothing else and never prints the token.
 import 'dotenv/config';
@@ -37,8 +37,8 @@ for (const [name, r] of probes) {
 }
 
 // --- 2. the property group and the checkbox ---------------------------------------------------
-const GROUP = 'eazybe_dialer';
-const PROP = 'eazybe_dial_queue';
+const GROUP = 'hans_dialer';
+const PROP = 'hans_dial_queue';
 console.log('\nthe dial-queue checkbox');
 
 let propOk = false;
@@ -52,17 +52,17 @@ if (existing.ok) {
 } else if (existing.status === 403) {
   console.log('  cannot even look: the token is missing crm.schemas.contacts.read');
 } else {
-  const g = await hs('/crm/v3/properties/contacts/groups', { method: 'POST', body: JSON.stringify({ name: GROUP, label: 'Eazybe dialer', displayOrder: -1 }) });
-  console.log(g.ok ? '  created the property group "Eazybe dialer"'
+  const g = await hs('/crm/v3/properties/contacts/groups', { method: 'POST', body: JSON.stringify({ name: GROUP, label: 'Hans dialer', displayOrder: -1 }) });
+  console.log(g.ok ? '  created the property group "Hans dialer"'
     : g.status === 409 ? '  property group already there'
     : `  property group: ${g.status} ${String(g.text).slice(0, 120)}`);
 
   const created = await hs('/crm/v3/properties/contacts', { method: 'POST', body: JSON.stringify({
-    name: PROP, label: 'Eazybe · Dial queue', groupName: g.ok || g.status === 409 ? GROUP : 'contactinformation',
+    name: PROP, label: 'Hans · Dial queue', groupName: g.ok || g.status === 409 ? GROUP : 'contactinformation',
     // 'checkbox' with a single option is the only shape HubSpot draws as a real tick box on a record;
     // 'booleancheckbox' is the same data but renders as a Yes/No dropdown, which reps disliked.
     type: 'enumeration', fieldType: 'checkbox', formField: false, hasUniqueValue: false, hidden: false,
-    description: 'Tick to send this contact to the Eazybe dialer queue. Untick to remove it. Untick then re-tick to run it again.',
+    description: 'Tick to send this contact to the Hans dialer queue. Untick to remove it. Untick then re-tick to run it again.',
     options: [{ label: 'Add to dial queue', value: 'true', displayOrder: 0, hidden: false }],
   }) });
   if (created.ok) { propOk = true; console.log(`  created "${created.body.label}" — internal name ${created.body.name}`); }

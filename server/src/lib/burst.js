@@ -6,9 +6,9 @@ import { attemptLimit, attemptLimitSQL, offsetSQL } from './leadPolicy.js';
 import { activeBurst } from '../state.js';
 import { releaseLead, pickFromNumber } from './queue.js';
 import { resolveLead, offsetAt } from './countries.js';
-import { hangup, beep, bridge, dialLead, startTick, noAnswerTone, stopPlayback, isInvalidDestination, telnyxDetail } from '../telnyx.js';
+import { hangup, beep, bridge, dialLead, startTick, noAnswerTone, stopPlayback, isInvalidDestination, providerDetail } from '../plivo.js';
 
-const BEEP_TIMEOUT_MS = 900; // bridge anyway if Telnyx never reports the beep finished; short, to shrink the dead-air window in which a lead can hang up before we bridge
+const BEEP_TIMEOUT_MS = 900; // bridge anyway if Plivo never reports the beep finished; short, to shrink the dead-air window in which a lead can hang up before we bridge
 
 // Rep-facing strings, shown verbatim in the UI (same rule as session.js: plain words, never "leg").
 const MSG = {
@@ -17,7 +17,7 @@ const MSG = {
   nothingDialed: 'Nothing was dialed — every caller ID has hit its daily cap.',
 };
 
-// Rep-leg audio cues. The beep must finish before we bridge, so we wait for Telnyx's
+// Rep-leg audio cues. The beep must finish before we bridge, so we wait for Plivo's
 // call.playback.ended for beep.wav on that leg (webhooks.js -> onRepPlaybackEnded).
 const beepWaiters = new Map(); // rep call_control_id -> resolve()
 
@@ -52,6 +52,7 @@ export async function onLeadEvent(type, p, { userId, burstId, leadId }) {
     const { rowCount } = await q('SELECT 1 FROM calls WHERE telnyx_call_id = $1', [p.call_control_id]);
     if (!rowCount) throw new Error('lead dial has not been saved yet');
   }
+  if (type === 'call.bridged') return onBridged(p, { userId, burstId, leadId });
   if (type === 'call.answered') return onAnswered(p.call_control_id, userId, burstId, leadId, p.occurred_at);
   if (type === 'call.hangup') return onHangup(p, userId, burstId, leadId);
 }
@@ -71,7 +72,7 @@ async function onAnswered(ccid, userId, burstId, leadId, occurredAt = new Date()
   });
 
   if (!won) {
-    // Telnyx may redeliver call.answered for the leg that already won: ignore it, never hang it up.
+    // Plivo may redeliver call.answered for the leg that already won: ignore it, never hang it up.
     const { rows: [dup] } = await q(
       'SELECT c.id, c.bridged_at, c.duration, c.recording_status FROM bursts b JOIN calls c ON c.id = b.winner_call_id WHERE b.id = $1 AND c.telnyx_call_id = $2', [burstId, ccid]);
     if (dup) {
@@ -110,12 +111,7 @@ async function onAnswered(ccid, userId, burstId, leadId, occurredAt = new Date()
     await stopPlayback(rep);      // end the dialing tick
     await beepThenWait(rep);      // "say hello now"; resolves on playback.ended (or the timeout)
     await bridge(rep, ccid, 'bridge-' + won.call_id);
-    await q('UPDATE calls SET bridged_at = coalesce(bridged_at, now()) WHERE id = $1', [won.call_id]);
-    // Record from here: only a bridged conversation, only the lead leg (the rep's leg lives all shift).
-    // Recording handles its own errors; wait so a crash before it starts can resume on redelivery.
-    await startLeadRecording(won.call_id, ccid, { kind: 'lead', userId, burstId, leadId });
-    emitToUser(userId, 'call:bridged', { callId: won.call_id });
-    pokeAdmins('live');
+    // The transfer is asynchronous: conference entry confirms the bridge and starts recording.
   } catch (e) {
     // Most common: the lead hung up during the beep window, so bridge hits a dead leg (90015/90018).
     // Never strand the rep in a fake call - silence the rep leg and end this call so the UI leaves 'live'
@@ -127,6 +123,16 @@ async function onAnswered(ccid, userId, burstId, leadId, occurredAt = new Date()
       `UPDATE calls SET duration = coalesce(duration, EXTRACT(EPOCH FROM (now() - answered_at))::int) WHERE id = $1 RETURNING duration, disposition`, [won.call_id]);
     if (!d?.disposition) emitToUser(userId, 'call:ended', { callId: won.call_id, leadId, duration: d?.duration ?? 0, cause: 'bridge_failed' });
   }
+}
+
+async function onBridged(p, state) {
+  const { rows: [c] } = await q(`SELECT c.id, c.duration, c.recording_status FROM calls c JOIN bursts b ON b.winner_call_id = c.id
+    WHERE c.telnyx_call_id = $1 AND b.id = $2 AND c.disposition IS NULL`, [p.call_control_id, state.burstId]);
+  if (!c || c.duration != null) return;
+  await q('UPDATE calls SET bridged_at = coalesce(bridged_at, $2) WHERE id = $1', [c.id, p.occurred_at ?? new Date()]);
+  if (!c.recording_status) await startLeadRecording(c.id, p.call_control_id, state);
+  emitToUser(state.userId, 'call:bridged', { callId: c.id });
+  pokeAdmins('live');
 }
 
 async function onHangup(p, userId, burstId, leadId) {
@@ -239,7 +245,7 @@ export async function startBurst(userId, leads, fromOverride = null, extra = {})
   const legs = [];
   let lastError = null; // what the rep is told when nothing rang
   // The tick starts before the first dial goes out, not after the last one comes back: the rep hears
-  // dialing in progress from the moment they pressed the button, and a slow Telnyx round-trip is not dead air.
+  // dialing in progress from the moment they pressed the button, and a slow Plivo round-trip is not dead air.
   const rep = await repLeg(userId);
   if (rep) startTick(rep).catch((e) => console.warn('tick failed', String(rep).slice(-8), e.message));
   for (const lead of leads) {
@@ -256,18 +262,18 @@ export async function startBurst(userId, leads, fromOverride = null, extra = {})
       await q('INSERT INTO calls (lead_id, burst_id, telnyx_call_id, from_number, to_number) VALUES ($1, $2, $3, $4, $5)', [lead.id, burst.id, ccid, from, lead.phone]);
       legs.push({ leadId: lead.id, name: lead.name, phone: lead.phone, country: lead.country, from, card: previewCard(lead) });
     } catch (e) {
-      // Two very different failures wear the same catch. A number Telnyx calls invalid can never be
+      // Two very different failures wear the same catch. A number Plivo calls invalid can never be
       // dialled, so the lead rolls to its next number or stops ('invalid'); requeueing it burned
       // 16 of 73 dials in one day on 11 dead numbers, none of which ever consumed an attempt.
       // A transient error still costs nothing and comes back in 10 minutes ('cancelled').
       const dead = isInvalidDestination(e);
-      console.error('dial failed', lead.phone, dead ? '(invalid, not retrying)' : '', e.message); // always the Telnyx body
+      console.error('dial failed', lead.phone, dead ? '(invalid, not retrying)' : '', e.message); // always the Plivo body
       await transaction(async () => {
         const { rows: [failed] } = await q(`INSERT INTO calls (lead_id, burst_id, from_number, to_number, disposition) VALUES ($1, $2, $3, $4, 'failed') RETURNING id`, [lead.id, burst.id, from, lead.phone]);
         await releaseLead(lead.id, dead ? 'invalid' : 'cancelled');
         await queueCallSync(failed.id);
       });
-      lastError = dead ? MSG.invalid : MSG.notPlaced(telnyxDetail(e));
+      lastError = dead ? MSG.invalid : MSG.notPlaced(providerDetail(e));
       emitToUser(userId, 'lead:failed', { leadId: lead.id, name: lead.name, phone: lead.phone, error: lastError });
     }
   }

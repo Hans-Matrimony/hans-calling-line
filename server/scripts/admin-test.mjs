@@ -1,15 +1,15 @@
 // Cost capture, recording, the dashboard's metrics and HubSpot call logging, end to end against a
-// throwaway `scratch` schema with Telnyx and HubSpot stubbed at the fetch layer. Places no calls,
+// throwaway `scratch` schema with Plivo and HubSpot stubbed at the fetch layer. Places no calls,
 // needs no tokens. Usage (from server/):
 //   node scripts/admin-test.mjs
-if (process.env.EAZYBE_TEST_DATABASE !== 'isolated') throw new Error('Run npm test from server/ to use the disposable database.');
+if (process.env.HANS_TEST_DATABASE !== 'isolated') throw new Error('Run npm test from server/ to use the disposable database.');
 import { readFileSync } from 'node:fs';
 
 const base = process.env.DATABASE_URL;
 process.env.DATABASE_URL = base + (base.includes('?') ? '&' : '?') + 'options=' + encodeURIComponent('-c search_path=scratch');
-Object.assign(process.env, { TELNYX_API_KEY: 'KEYtest', TELNYX_PUBLIC_KEY: 'pub', TELNYX_CONNECTION_ID: 'conn', PUBLIC_URL: 'https://dialer.test', HUBSPOT_TOKEN: 'pat-test', RECORD_CALLS: 'true' });
+Object.assign(process.env, { PLIVO_AUTH_ID: 'MAtest', PLIVO_AUTH_TOKEN: 'test-token', PLIVO_APPLICATION_ID: 'app-test', PUBLIC_URL: 'https://dialer.test', HUBSPOT_TOKEN: 'pat-test', RECORD_CALLS: 'true' });
 
-// --- stubs: Telnyx (the SDK uses global fetch) and HubSpot -----------------------------------------
+// --- stubs: Plivo (the SDK uses global fetch) and HubSpot -----------------------------------------
 const calls = { recordStart: 0, recList: 0, recGet: 0, hsCallPost: [], hsCallPatch: [], hsFiles: 0, hsContactPost: [], hsSearch: 0 };
 let recordStartStatus = 200;
 let hsCallStatus = 200;
@@ -19,12 +19,13 @@ const json = (body, status = 200) => ({ ok: status < 400, status, json: async ()
 
 globalThis.fetch = async (url, init = {}) => {
   const u = String(url); const m = init.method ?? 'GET';
-  if (u === 'https://api.telnyx.com/v2/calls' && m === 'POST') return dialResponse();
-  if (u.startsWith('https://api.telnyx.com/v2/calls/') && /\/actions\/playback_(start|stop)$/.test(u)) return json({ data: { result: 'ok' } });
-  if (u.startsWith('https://api.telnyx.com/v2/calls/') && u.endsWith('/actions/record_start')) { calls.recordStart++; return recordStartStatus === 200 ? json({ data: { result: 'ok' } }) : json({ errors: [{ detail: 'call not found' }] }, recordStartStatus); }
-  if (u.startsWith('https://api.telnyx.com/v2/recordings/rec-1')) { calls.recGet++; return json({ data: { id: 'rec-1', status: 'completed', download_urls: { mp3: 'https://s3.test/rec-1.mp3' } } }); }
-  if (u.startsWith('https://api.telnyx.com/v2/recordings')) { calls.recList++; return json({ data: [{ id: 'rec-1', status: 'completed', call_leg_id: 'leg-1', download_urls: { mp3: 'https://s3.test/rec-1.mp3' } }], meta: { page_number: 1, total_pages: 1, page_size: 20, total_results: 1 } }); }
-  if (u.startsWith('https://api.telnyx.com/v2/balance')) return json({ data: { balance: '12.34', pending: '0.10', credit_limit: '0', available_credit: '12.34', currency: 'USD' } });
+  const root = 'https://api.plivo.com/v1/Account/MAtest/';
+  if (u === root + 'Call/' && m === 'POST') return dialResponse();
+  if (u.startsWith(root + 'Call/') && u.endsWith('/Play/')) return json({ message: 'ok' });
+  if (u.startsWith(root + 'Call/') && u.endsWith('/Record/')) { calls.recordStart++; return recordStartStatus === 200 ? json({ message: 'recording started' }) : json({ error: 'call not found' }, recordStartStatus); }
+  if (u.startsWith(root + 'Recording/rec-1/')) { calls.recGet++; return json({ recording_id: 'rec-1', recording_url: 'https://s3.test/rec-1.mp3' }); }
+  if (u.startsWith(root + 'Recording/?')) { calls.recList++; return json({ objects: [{ recording_id: 'rec-1', call_uuid: new URL(u).searchParams.get('call_uuid'), recording_url: 'https://s3.test/rec-1.mp3' }] }); }
+  if (u === root) return json({ cash_credits: '12.34' });
   if (u === 'https://s3.test/rec-1.mp3') return { ok: true, status: 200, arrayBuffer: async () => new TextEncoder().encode('MP3BYTES').buffer, headers: new Headers() };
   if (u.startsWith('https://api.hubapi.com/crm/v3/properties/calls/hs_call_disposition')) return json({ options: [{ label: 'Connected', value: 'guid-connected' }, { label: 'No answer', value: 'guid-noanswer' }] });
   if (u.startsWith('https://api.hubapi.com/crm/v3/objects/contacts/search')) {
@@ -59,18 +60,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 await q('DROP SCHEMA IF EXISTS scratch CASCADE');
 await q('CREATE SCHEMA scratch');
 await q(readFileSync(new URL('../sql/schema.sql', import.meta.url), 'utf8'));
-const { rows: [rep] } = await q(`INSERT INTO users (email, password_hash, hubspot_owner_id) VALUES ('himanshu@eazybe.com', 'x', 94828863) RETURNING id`);
-const { rows: [adm] } = await q(`INSERT INTO users (email, password_hash, role) VALUES ('marketing@eazybe.com', 'x', 'admin') RETURNING id, role`);
+const { rows: [rep] } = await q(`INSERT INTO users (email, password_hash, hubspot_owner_id) VALUES ('himanshu@hansmatrimony.com', 'x', 94828863) RETURNING id`);
+const { rows: [adm] } = await q(`INSERT INTO users (email, password_hash, role) VALUES ('marketing@hansmatrimony.com', 'x', 'admin') RETURNING id, role`);
 ok('admin role column', adm.role, 'admin');
 
 const lead = async (hs, phone, extra = {}) => (await q(
   `INSERT INTO leads (hubspot_contact_id, name, phone, phones, segment, user_id, status, country) VALUES ($1, $2, $3, ARRAY[$3], $4, $5, 'queued', $6) RETURNING id`,
   [hs, extra.name ?? null, phone, extra.segment ?? 'non_india', rep.id, extra.country ?? null])).rows[0].id;
-const call = async (leadId, ccid, at, o = {}) => (await q(
+const call = async (leadId, ccid, at, o = {}) => { const id = (await q(
   `WITH b AS (INSERT INTO bursts (user_id) VALUES ($1) RETURNING id)
    INSERT INTO calls (lead_id, burst_id, telnyx_call_id, from_number, to_number, started_at, answered_at, duration, disposition, sub_outcome, notes, dispositioned_at)
    SELECT $2, b.id, $3, '+13024170301', $4, $5::timestamptz, $6::timestamptz, $7, $8, $9, $10, $11::timestamptz FROM b RETURNING id`,
   [rep.id, leadId, ccid, o.to ?? '+447738284594', at, o.answered ?? null, o.duration ?? null, o.disposition ?? null, o.sub ?? null, o.notes ?? null, o.dispositioned ?? null])).rows[0].id;
+  await q('INSERT INTO plivo_calls(id, call_uuid, state) VALUES ($1, $1, $2)', [ccid, JSON.stringify({ kind: 'lead', userId: rep.id })]);
+  return id;
+};
 const row = (id) => q('SELECT * FROM calls WHERE id = $1', [id]).then((r) => r.rows[0]);
 const costRow = (ccid) => q('SELECT kind, user_id, call_id, total_cost::float AS total_cost, status, jsonb_array_length(parts)::int AS parts FROM telnyx_costs WHERE call_control_id = $1', [ccid]).then((r) => r.rows[0]);
 
@@ -119,7 +123,7 @@ r = await row(C1);
 const posted = calls.hsCallPost[0];
 ok('engagement created and remembered', [r.hubspot_call_id, calls.hsCallPost.length], ['hscall-1', 1]);
 ok('associated to the contact, call_to_contact', posted.associations[0], { to: { id: '101' }, types: [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 194 }] });
-ok('the fields CallHippo pushes', [posted.properties.hs_call_direction, posted.properties.hs_call_status, posted.properties.hs_call_duration, posted.properties.hs_call_disposition, posted.properties.hs_activity_type, posted.properties.hs_call_body.split(' · Eazybe call reference: ')[0], posted.properties.hubspot_owner_id],
+ok('the fields CallHippo pushes', [posted.properties.hs_call_direction, posted.properties.hs_call_status, posted.properties.hs_call_duration, posted.properties.hs_call_disposition, posted.properties.hs_activity_type, posted.properties.hs_call_body.split(' · Hans call reference: ')[0], posted.properties.hubspot_owner_id],
   ['OUTBOUND', 'COMPLETED', '90000', 'guid-connected', 'Interested', 'Interested · wants a demo', '94828863']);
 ok('recording link is updated to the HubSpot Files copy', calls.hsCallPatch.at(-1).body.properties.hs_call_recording_url, 'https://f.hubspotusercontent.net/rec.mp3');
 await logCall(C1);
@@ -164,13 +168,13 @@ const pending = calls.hsCallPost.at(-1);
 ok('answered but never dispositioned: logged anyway at hangup',
   [calls.hsCallPost.length - postsBefore, pending?.properties?.hs_call_status, pending?.properties?.hs_call_duration, 'hs_call_disposition' in (pending?.properties ?? {})],
   [1, 'COMPLETED', '25000', false]);
-ok('...and it says so on the timeline', pending?.properties?.hs_call_title, 'Eazybe dialer · Answered — no outcome saved yet');
+ok('...and it says so on the timeline', pending?.properties?.hs_call_title, 'Hans dialer · Answered — no outcome saved yet');
 await q(`UPDATE calls SET disposition = 'connected', sub_outcome = 'interested', notes = 'came back to it' WHERE id = $1`, [C7]);
 const patchesBefore = calls.hsCallPatch.length;
 await logCall(C7);
 const upd = calls.hsCallPatch.at(-1);
 ok('the outcome later updates that same activity, no second one',
-  [calls.hsCallPost.length - postsBefore, calls.hsCallPatch.length - patchesBefore, upd?.body?.properties?.hs_call_disposition, upd?.body?.properties?.hs_activity_type, upd?.body?.properties?.hs_call_body?.split(' · Eazybe call reference: ')[0]],
+  [calls.hsCallPost.length - postsBefore, calls.hsCallPatch.length - patchesBefore, upd?.body?.properties?.hs_call_disposition, upd?.body?.properties?.hs_activity_type, upd?.body?.properties?.hs_call_body?.split(' · Hans call reference: ')[0]],
   [1, 1, 'guid-connected', 'Interested', 'Interested · came back to it']);
 const stillRinging = await call(L1, 'cc-7c', '2026-09-09T17:30:00Z', {}); // never answered, no outcome
 await logCall(stillRinging);
@@ -179,15 +183,15 @@ await q(`UPDATE calls SET disposition = 'cancelled' WHERE id = $1`, [stillRingin
 await logCall(stillRinging);
 ok('a cancelled burst leg is never logged', calls.hsCallPost.length - postsBefore, 1);
 
-// --- 3c. a number Telnyx calls invalid must stop being retried ---------------------------------
+// --- 3c. a number Plivo calls invalid must stop being retried ---------------------------------
 // The two strings below are verbatim from production, where 11 dead numbers ate 16 of 73 dials in a
 // day without ever consuming an attempt.
-const { isInvalidDestination } = await import('../src/telnyx.js');
+const { isInvalidDestination } = await import('../src/plivo.js');
 const { releaseLead } = await import('../src/lib/queue.js');
-const REAL = '403 {"data":{"call_control_id":"v3:rQK"},"errors":[{"code":10010,"title":null,"detail":"Destination Number is invalid D11. The destination number is invalid."}],"telnyx_error":{"error_code":"D11"}}';
-ok('Telnyx D11 is recognised as a permanently bad number', isInvalidDestination(new Error(REAL)), true);
-ok('so is the bare error code', isInvalidDestination(new Error('403 {"errors":[{"code":10010}]}')), true);
-ok('a timeout is NOT: it must keep its attempt', isInvalidDestination(new Error('request to https://api.telnyx.com timed out')), false);
+const REAL = 'to parameter is invalid';
+ok('Plivo invalid destination is recognised as a permanently bad number', isInvalidDestination(new Error(REAL)), true);
+ok('invalid destination is recognised', isInvalidDestination(new Error('invalid destination number')), true);
+ok('a timeout is NOT: it must keep its attempt', isInvalidDestination(new Error('request to https://api.plivo.com timed out')), false);
 ok('nor is a rate limit', isInvalidDestination(new Error('429 {"errors":[{"code":10015,"detail":"Too many requests"}]}')), false);
 ok('nor a destination missing from the outbound voice profile — that is our config, fixable',
   isInvalidDestination(new Error('403 {"errors":[{"code":10012,"detail":"Destination not whitelisted on the outbound voice profile"}]}')), false);
@@ -198,20 +202,21 @@ const bad = (await q('SELECT status, attempt_count FROM leads WHERE id = $1', [L
 ok('a one-number lead with a dead number stops instead of looping', [bad.status, bad.attempt_count], ['stopped', 1]);
 
 // --- 3d. when nothing rang, the rep reads why - not "no legs could be placed" --------------------
-const { telnyxDetail } = await import('../src/telnyx.js');
+const { providerDetail } = await import('../src/plivo.js');
 const { startBurst } = await import('../src/lib/burst.js');
-ok('the one readable line of a Telnyx error', telnyxDetail(new Error(REAL)), 'Destination Number is invalid D11. The destination number is invalid.');
+ok('the one readable line of a Plivo error', providerDetail(new Error(REAL)), 'to parameter is invalid');
+await q("INSERT INTO plivo_calls(id, call_uuid, state) VALUES ('rep-leg-1', 'rep-leg-1', '{}')");
 await q('UPDATE users SET telnyx_session_call_id = $2 WHERE id = $1', [rep.id, 'rep-leg-1']);
 const leadRow = async (id) => (await q('SELECT * FROM leads WHERE id = $1', [id])).rows[0];
 const LC = await lead('manual-+98136252291', '+98136252291');
-dialResponse = () => json({ errors: [{ code: 10010, detail: 'Destination Number is invalid D11. The destination number is invalid.' }], telnyx_error: { error_code: 'D11' } }, 403);
+dialResponse = () => json({ error: 'to parameter is invalid' }, 400);
 ok('an invalid number: the plain-words refusal, in the same words as the tape row',
   await startBurst(rep.id, [await leadRow(LC)], '+13024170301').then(() => null, (e) => e.message), 'That is not a valid phone number — the lead moves on.');
 ok('the lead stopped, with one failed call on record',
   [(await leadRow(LC)).status, (await q(`SELECT count(*)::int n FROM calls WHERE lead_id = $1 AND disposition = 'failed'`, [LC])).rows[0].n], ['stopped', 1]);
 const LD = await lead('manual-+447700900123', '+447700900123');
-dialResponse = () => json({ errors: [{ code: 10001, detail: 'Service unavailable' }] }, 422);
-ok('any other refusal carries Telnyx\'s reason and says the lead comes back',
+dialResponse = () => json({ error: 'Service unavailable' }, 422);
+ok('any other refusal carries Plivo\'s reason and says the lead comes back',
   await startBurst(rep.id, [await leadRow(LD)], '+13024170301').then(() => null, (e) => e.message), 'The call could not be placed — Service unavailable. Back in the queue in 10 min.');
 const back = (await q(`SELECT status, round(EXTRACT(EPOCH FROM (next_call_at - now())) / 60)::int AS mins FROM leads WHERE id = $1`, [LD])).rows[0];
 ok('and it really is back in the queue in 10 min', back, { status: 'queued', mins: 10 });
@@ -233,7 +238,7 @@ ok('by-day is zero-filled and ends on the period', [days.length, days.at(-1).day
 const oc = await m.outcomes(f9);
 ok('outcomes: connected without a tile is its own row', oc.some((o) => o.outcome === 'connected_unspecified'), true);
 const rp = await m.reps(f9);
-ok('reps: admin is not a rep row', rp.map((x) => x.email), ['himanshu@eazybe.com']);
+ok('reps: admin is not a rep row', rp.map((x) => x.email), ['himanshu@hansmatrimony.com']);
 const cl = await m.calls(f9, { q: 'corcoran' });
 ok('call log search by name', cl.rows.every((x) => x.name === 'L. Corcoran') && cl.total >= 1, true);
 const cl2 = await m.calls(f9, { q: '+1 202 555 0185' });

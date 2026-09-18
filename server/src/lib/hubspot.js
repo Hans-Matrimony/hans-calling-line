@@ -1,4 +1,4 @@
-// The HubSpot inlet (docs/HUBSPOT-QUEUE.md). A rep ticks "Eazybe · Dial queue" on a contact; a poll
+// The HubSpot inlet (docs/HUBSPOT-QUEUE.md). A rep ticks "Hans · Dial queue" on a contact; a poll
 // pulls it into that rep's queue. Live toggle: unticking removes a queued lead, re-ticking brings it
 // back. Read-only - nothing is ever written to HubSpot. Dormant and silent without HUBSPOT_TOKEN,
 // so the CSV inlet keeps working untouched until the token exists.
@@ -9,7 +9,7 @@ import { reconcileLead } from './hubspotReconcile.js';
 import { emitToUser } from '../io.js';
 
 const BASE = 'https://api.hubapi.com';
-export const QUEUE_PROP = 'eazybe_dial_queue';
+export const QUEUE_PROP = 'hans_dial_queue';
 const CACHE_MS = 60 * 60 * 1000;   // property schema, owners and the portal id: re-read hourly
 const PAGE_CAP = 5000;             // sanity stop; a rep's queue is never this big
 // Longer than this since the previous pull and "was this lead ticked last time?" stops being a real
@@ -22,7 +22,7 @@ export const configured = () => !!token();
 // Rep-facing strings. Same rule as session.js: plain words, and every one of these means "the inlet
 // is broken", never "one contact was odd" - those are logged and counted, not surfaced.
 const MSG = {
-  noProperty: 'HubSpot is missing the "Eazybe · Dial queue" checkbox — create it on contacts with the internal name eazybe_dial_queue.',
+  noProperty: 'HubSpot is missing the "Hans · Dial queue" checkbox — create it on contacts with the internal name hans_dial_queue.',
   badToken: 'HubSpot rejected the token — check HUBSPOT_TOKEN.',
   noScope: 'The HubSpot token is missing a scope — it needs crm.objects.contacts.read, crm.schemas.contacts.read and crm.objects.owners.read.',
   rateLimited: 'HubSpot is rate-limiting us — the next sync will retry.',

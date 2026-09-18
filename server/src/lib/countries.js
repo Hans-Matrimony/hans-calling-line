@@ -67,7 +67,7 @@ export const COUNTRIES = new Map([
   // Middle East -> eu
   ...C('eu', 'united arab emirates', 'uae', 'u.a.e.', 'dubai', 'oman'),
   ...C('eu', 'saudi arabia', 'ksa', 'qatar', 'kuwait', 'bahrain', 'jordan', 'lebanon', 'iraq'),
-  // Iran (+98) is deliberately absent: Telnyx cannot route it (sanctions, docs/TELNYX-COVERAGE.md s4), so a
+  // Iran (+98) is deliberately absent: major CPaaS providers cannot route it (sanctions), so a
   // lead there gets no timezone and sits in "No country" instead of failing every 10 minutes for ever.
 
   // Africa -> eu

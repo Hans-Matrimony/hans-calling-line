@@ -1,7 +1,7 @@
 // Multi-number leads: CSV parsing and the alternate-number cascade, end to end against a throwaway
 // `scratch` schema on the configured database. Places no calls. Usage (from server/):
 //   node scripts/cascade-test.mjs
-if (process.env.EAZYBE_TEST_DATABASE !== 'isolated') throw new Error('Run npm test from server/ to use the disposable database.');
+if (process.env.HANS_TEST_DATABASE !== 'isolated') throw new Error('Run npm test from server/ to use the disposable database.');
 import { readFileSync } from 'node:fs';
 
 // Point every pool connection at the scratch schema before anything imports pool.js, so the real

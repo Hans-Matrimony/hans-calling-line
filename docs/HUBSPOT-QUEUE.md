@@ -10,8 +10,8 @@ untouched and stays the first inlet.
 
 | | CSV upload | HubSpot checkbox |
 |---|---|---|
-| Where the rep acts | Eazybe dialer, Upload CSV button | HubSpot contact record (or a bulk edit / workflow) |
-| Gesture | Export from HubSpot → upload file | Tick **Eazybe · Dial queue** |
+| Where the rep acts | Hans dialer, Upload CSV button | HubSpot contact record (or a bulk edit / workflow) |
+| Gesture | Export from HubSpot → upload file | Tick **Hans · Dial queue** |
 | Whose queue | The rep who uploaded | The **HubSpot contact owner**; unowned → whoever ticked it |
 | Reaches the queue | Immediately | Next Start dialing / Up next open; ≤60 s in the background |
 | Remove from queue | No way (lead runs its cadence) | Untick |
@@ -24,7 +24,7 @@ CSV and a contact ticked in HubSpot are the same lead** — no duplicates, no do
 handles the CSV-without-Record-ID case). Both feed the one per-rep queue Auto dial and Burst dial
 already draw from.
 
-**The rep instruction, in full:** open a contact → tick *Eazybe · Dial queue* → open the dialer and
+**The rep instruction, in full:** open a contact → tick *Hans · Dial queue* → open the dialer and
 press Start. To drop it, untick. To run it again later, untick and re-tick.
 
 ## 2. Decisions locked
@@ -80,12 +80,12 @@ Concurrent calls for the same rep coalesce (one in flight at a time).
 
 0. **Property schema.** `GET /crm/v3/properties/contacts` (cached 1 h): which properties exist — asking
    for one that does not is an error, not an empty field — and the option labels behind every enum.
-   No `eazybe_dial_queue` here is the "inlet is broken" case, reported, never a silent empty queue.
+   No `hans_dial_queue` here is the "inlet is broken" case, reported, never a silent empty queue.
 1. **Owners.** `GET /crm/v3/owners` (cached 1 h) → `{ id, userId, email }`. Map to `users` by email;
    persist `users.hubspot_owner_id` / `hubspot_user_id`. **A rep whose dialer login is not their HubSpot
    email cannot be matched** — the one setup failure that is invisible from HubSpot's side, so
    `node scripts/hubspot-owners.mjs` prints the mapping and the SQL to pin it by hand.
-2. **Search.** `POST /crm/v3/objects/contacts/search`: `eazybe_dial_queue EQ true` AND
+2. **Search.** `POST /crm/v3/objects/contacts/search`: `hans_dial_queue EQ true` AND
    (`hubspot_owner_id EQ <rep>` OR (`hubspot_owner_id` not set AND `hs_updated_by_user_id EQ <rep user>`)),
    properties from §4, 100/page, paginate on `after`. Result = the rep's **ticked set**.
 3. **Reconcile** ticked set against `leads WHERE source = 'hubspot'` for this rep:
@@ -143,16 +143,16 @@ contact was odd". They surface in the strip and in `/stats`, never only in logs.
 `crm.objects.contacts.read`, `crm.schemas.contacts.read`, `crm.objects.owners.read`.
 Copy the token into `server/.env` as `HUBSPOT_TOKEN=` and into Railway (`dialer` service).
 
-**One property** — Settings → Properties → Contact properties → Create. Group "Eazybe dialer":
+**One property** — Settings → Properties → Contact properties → Create. Group "Hans dialer":
 
 | Internal name | Label | Field type |
 |---|---|---|
-| `eazybe_dial_queue` | Eazybe · Dial queue | Single checkbox |
+| `hans_dial_queue` | Hans · Dial queue | Single checkbox |
 
 Nothing else. No owner ids to look up (resolved by email — each rep's dialer login must equal their
-HubSpot user email). The `eazybe_last_*` properties from PLAN-v2 §5 belong to write-back; not now.
+HubSpot user email). The `hans_last_*` properties from PLAN-v2 §5 belong to write-back; not now.
 
-**Optional, zero-step:** a HubSpot Workflow that sets *Eazybe · Dial queue* = Yes by rule (e.g. owner
+**Optional, zero-step:** a HubSpot Workflow that sets *Hans · Dial queue* = Yes by rule (e.g. owner
 is Himanshu AND country ≠ India AND lead status = New). Under the live-toggle model that workflow
 *is* the queue policy. Pair it with a second branch that unticks on your own "done" criteria.
 
@@ -176,7 +176,7 @@ live field refresh for queued leads · webhooks (the endpoint shape is ready if 
 
 ## 10. Built 2026-09-09 — and what the real portal changed
 
-Verified against portal 40009480 ("Eazybe") before writing the mapping. Six things the spec had wrong
+Verified against portal 40009480 ("Hans") before writing the mapping. Six things the spec had wrong
 or missing:
 
 | Assumed | Actually | Done about it |
@@ -208,7 +208,7 @@ does it in the right order on its own. (Also applied by hand on 2026-09-09.)
 - Live, against the real portal: a bad token returns the plain-words error through `/stats` and
   `/sync`, and both strip states render (screenshotted).
 - **Not yet proven:** one real ticked contact travelling into a queue. That needs `HUBSPOT_TOKEN` and
-  the `eazybe_dial_queue` property, both §7. Tick one contact, press Sync now, expect "1 added".
+  the `hans_dial_queue` property, both §7. Tick one contact, press Sync now, expect "1 added".
 
 ## 11. The checkbox itself (2026-09-10)
 
@@ -218,7 +218,7 @@ Created as `fieldType: booleancheckbox` (HubSpot's "Single checkbox") and immedi
 Why: a `booleancheckbox` stores a clean boolean, but HubSpot renders it on a contact record as a
 **Yes/No dropdown** — two clicks, and it reads like a question rather than an action. `checkbox`
 with a single option is the only shape HubSpot draws as a real tick box. Same stored value
-(`true`), same search filter (`eazybe_dial_queue EQ 'true'`), verified against a live contact after
+(`true`), same search filter (`hans_dial_queue EQ 'true'`), verified against a live contact after
 the change — so no server code changed. Unticking empties the property, which is exactly what the
 untick sweep in §5.3 already expects.
 

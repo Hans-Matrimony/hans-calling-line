@@ -1,10 +1,7 @@
-// Telnyx spend (Wallet). Telnyx sends one `call.cost` webhook per leg after it ends - only when the
-// Call Control app has call_cost_in_webhooks on (scripts/telnyx-setup.mjs). Every leg we place costs
-// money, including the loser legs of a burst and the rep's own session leg, so each lands in
-// telnyx_costs whether or not a `calls` row exists for it.
+// Provider spend uses the existing ledger table to preserve historical billing.
 import { q } from '../db/pool.js';
 import { pokeAdmins } from '../io.js';
-import { telnyx } from '../telnyx.js';
+import { plivoRequest, voiceCall } from '../plivo.js';
 
 /** Upsert one call.cost event. Telnyx retries webhooks and may send an 'error' cost before a
  *  'success' one: the later event wins; identity fields are kept from whichever arrived first. */
@@ -29,15 +26,26 @@ export async function onCallCost(p, state, occurredAt) {
   pokeAdmins('cost');
 }
 
-// Telnyx account balance, for the Wallet. One call a minute at most: the dashboard polls, Telnyx does not.
+// CDRs are fetched through a durable inbox job; Plivo may publish them after hangup.
+export async function refreshCallCost(id) {
+  const call = await voiceCall(id);
+  if (!call?.call_uuid) throw new Error('Plivo call UUID is not available for billing yet');
+  const cdr = await plivoRequest('Call/' + encodeURIComponent(call.call_uuid) + '/');
+  if (cdr.total_amount == null || !Number.isFinite(Number(cdr.total_amount))) throw new Error('Plivo billing is not ready yet');
+  await onCallCost({ call_control_id: id, call_leg_id: call.call_uuid, total_cost: cdr.total_amount,
+    billed_duration_secs: Number(cdr.bill_duration ?? cdr.billed_duration ?? cdr.call_duration ?? 0), status: 'success',
+    cost_parts: [{ call_part: 'voice', cost: cdr.total_amount, currency: 'USD', rate: cdr.total_rate ?? null }],
+  }, call.state, call.ended_at ?? new Date().toISOString());
+}
+
 let cached = { at: 0, value: null };
 export async function balance() {
   if (cached.value && Date.now() - cached.at < 60_000) return cached.value;
-  const { data } = await telnyx().balance.retrieve();
-  const n = (v) => (v == null ? null : Number(v));
+  const data = await plivoRequest('');
+  const amount = data.cash_credits == null ? null : Number(data.cash_credits);
   cached = { at: Date.now(), value: {
-    balance: n(data?.balance), pending: n(data?.pending), creditLimit: n(data?.credit_limit),
-    availableCredit: n(data?.available_credit), currency: data?.currency ?? 'USD', asOf: new Date().toISOString(),
+    balance: amount, pending: null, creditLimit: null, availableCredit: amount,
+    currency: 'USD', asOf: new Date().toISOString(),
   } };
   return cached.value;
 }

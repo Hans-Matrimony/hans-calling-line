@@ -1,8 +1,9 @@
 {
-  "name": "eazybe-dialer",
+  "name": "hans-dialer",
   "private": true,
   "engines": { "node": ">=22" },
   "scripts": {
+    "dev:db": "npm run dev:db --prefix server",
     "build": "npm ci --prefix server && npm ci --prefix client && npm run build --prefix client",
     "start": "npm run migrate --prefix server && npm start --prefix server",
     "dev:server": "npm run dev --prefix server",

@@ -1,12 +1,12 @@
 // Call recordings. The winning lead leg is recorded from the moment it is bridged (dual channel, mp3),
-// silently - owner's decision, 2026-09-10. Telnyx keeps the file; we keep what it takes to find it
+// silently - owner's decision, 2026-09-10. Plivo keeps the file; we keep what it takes to find it
 // again and a public token to serve it. Recording must never touch the call: every path here
 // swallows its own errors.
 import { randomBytes } from 'node:crypto';
 import { q, transaction } from '../db/pool.js';
 import { queueCallSync } from './hubspotJobs.js';
 import { pokeAdmins } from '../io.js';
-import { telnyx, startRecording, encodeState } from '../telnyx.js';
+import { plivoRequest, voiceCall, authHeader, startRecording, encodeState } from '../plivo.js';
 import { RECORD_CALLS, RECORD_BEEP } from '../config.js';
 
 /** Start recording the lead leg right after the bridge. `state` is the leg's existing client_state;
@@ -14,7 +14,8 @@ import { RECORD_CALLS, RECORD_BEEP } from '../config.js';
 export async function startLeadRecording(callId, ccid, state) {
   if (!RECORD_CALLS) return;
   try {
-    await startRecording(ccid, { play_beep: RECORD_BEEP, command_id: 'rec-' + callId, client_state: encodeState({ ...state, callId }) });
+    const recording = await startRecording(ccid, { play_beep: RECORD_BEEP, command_id: 'rec-' + callId, client_state: encodeState({ ...state, callId }) });
+    if (recording.recording_id) await q('UPDATE calls SET recording_id = coalesce(recording_id, $2) WHERE id = $1', [callId, recording.recording_id]);
     await q(`UPDATE calls SET recording_status = 'started', recording_token = coalesce(recording_token, $2) WHERE id = $1 AND recording_status IS NULL`,
       [callId, randomBytes(16).toString('hex')]);
   } catch (e) {
@@ -28,7 +29,7 @@ export async function startLeadRecording(callId, ccid, state) {
 const handle = (p, state) =>
   state?.callId ? ['id = $1', state.callId] : p?.call_control_id ? ['telnyx_call_id = $1', p.call_control_id] : [];
 
-/** call.recording.saved: the file exists at Telnyx. The links in the payload die in 10 minutes and are
+/** call.recording.saved: the file exists at Plivo. The links in the payload die in 10 minutes and are
  *  not stored. Fires the HubSpot upload (lazy import: hubspotCalls imports this module too). */
 export async function onRecordingSaved(p, state) {
   const [where, key] = handle(p, state);
@@ -42,6 +43,7 @@ export async function onRecordingSaved(p, state) {
       [key, p.call_leg_id ?? null, p.call_session_id ?? null, p.recording_started_at ?? null, p.recording_ended_at ?? null,
        randomBytes(16).toString('hex')]);
     if (!c) throw new Error('recording call has not been saved yet');
+    if (p.recording_id) await q('UPDATE calls SET recording_id = $2 WHERE id = $1', [c.id, p.recording_id]);
     await queueCallSync(c.id);
   });
   pokeAdmins('recording');
@@ -55,26 +57,43 @@ export async function onRecordingError(p, state) {
 }
 
 /** A fresh mp3 link for a call. Cached recording id -> retrieve; else find it by leg (or by the
- *  call_control_id) and cache the id for next time. Null when Telnyx has nothing (yet, or any more). */
+ *  call_control_id) and cache the id for next time. Null when Plivo has nothing (yet, or any more). */
 export async function recordingUrl(call) {
+  // Pre-migration recordings are never looked up using a Plivo account.
+  const mapped = await voiceCall(call.telnyx_call_id);
+  if (!mapped) return null;
   if (call.recording_id) {
-    const { data } = await telnyx().recordings.retrieve(call.recording_id);
-    return data?.download_urls?.mp3 ?? null;
+    const result = await plivoRequest('Recording/' + encodeURIComponent(call.recording_id) + '/');
+    return result.recording_url ?? null;
   }
-  const filter = call.recording_leg_id ? { call_leg_id: call.recording_leg_id } : { call_control_id: call.telnyx_call_id };
-  for await (const r of telnyx().recordings.list({ filter })) {
-    if (r.status && r.status !== 'completed') continue;
-    await q('UPDATE calls SET recording_id = $2 WHERE id = $1', [call.id, r.id]);
-    return r.download_urls?.mp3 ?? null;
-  }
-  return null;
+  if (!mapped.call_uuid) return null;
+  const result = await plivoRequest('Recording/?' + new URLSearchParams({ call_uuid: mapped.call_uuid }));
+  const recording = result.objects?.find(r => r.call_uuid === mapped.call_uuid && r.recording_url);
+  if (!recording) return null;
+  await q('UPDATE calls SET recording_id = $2 WHERE id = $1', [call.id, recording.recording_id]);
+  return recording.recording_url;
 }
 
-/** The whole file, for the HubSpot upload. */
+// Plivo recording downloads can require HTTP Basic authentication. Never send account
+// credentials to a third-party recording host or forward them across redirects.
+export async function fetchRecording(url, headers = {}) {
+  const target = new URL(url);
+  if (target.protocol !== 'https:') throw new Error('Recording URL must use HTTPS');
+  const trusted = target.hostname === 'plivo.com' || target.hostname.endsWith('.plivo.com');
+  let response = await fetch(url, { headers: { ...headers, ...(trusted ? { Authorization: authHeader() } : {}) }, redirect: 'manual', signal: AbortSignal.timeout(20000) });
+  for (let attempt = 0; response.status >= 300 && response.status < 400 && attempt < 3; attempt++) {
+    const location = response.headers.get('location');
+    if (!location) break;
+    url = new URL(location, url).href;
+    if (new URL(url).protocol !== 'https:') throw new Error('Recording redirect must use HTTPS');
+    response = await fetch(url, { headers, redirect: 'manual', signal: AbortSignal.timeout(20000) });
+  }
+  return response;
+}
 export async function recordingBytes(call) {
   const url = await recordingUrl(call);
   if (!url) return null;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error('telnyx download ' + res.status);
+  const res = await fetchRecording(url);
+  if (!res.ok) throw new Error('Plivo download ' + res.status);
   return Buffer.from(await res.arrayBuffer());
 }

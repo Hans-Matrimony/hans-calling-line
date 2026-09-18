@@ -16,7 +16,6 @@ import { router as admin } from './routes/admin.js';
 import { router as rec } from './routes/rec.js';
 import { q } from './db/pool.js';
 import { startPolling } from './lib/hubspot.js';
-import { ensureCues } from './telnyx.js';
 
 const app = express();
 const origin = process.env.CLIENT_ORIGIN ?? 'http://localhost:3000';
@@ -24,7 +23,7 @@ const origin = process.env.CLIENT_ORIGIN ?? 'http://localhost:3000';
 app.get('/health', (_req, res) => res.json({ ok: true }));
 app.use('/webhooks', webhooks); // raw body, so it goes before express.json()
 app.use('/rec', rec);           // public recording playback by token (HubSpot's player and the dashboard)
-app.use('/static', express.static(fileURLToPath(new URL('../public/', import.meta.url)), { maxAge: '1d', immutable: true })); // rep-leg cues: let Telnyx and any proxy keep them
+app.use('/static', express.static(fileURLToPath(new URL('../public/', import.meta.url)), { maxAge: '1d', immutable: true })); // rep-leg cue audio, played by URL from Plivo callbacks
 
 app.use((req, res, next) => { // CORS for the Next.js client on another port/origin
   res.header('Access-Control-Allow-Origin', origin);
@@ -64,9 +63,8 @@ setIo(io);
 
 const port = Number(process.env.PORT ?? 3001);
 server.listen(port, () => {
-  console.log(`dialer server on :${port}  webhooks -> ${process.env.PUBLIC_URL || '(PUBLIC_URL unset)'}/webhooks/telnyx`);
+  console.log(`dialer server on :${port}  webhooks -> ${process.env.PUBLIC_URL || '(PUBLIC_URL unset)'}/webhooks/plivo`);
   startPolling(); // HubSpot inlet; a no-op until HUBSPOT_TOKEN is set
   startWebhookWorker();
   startCallSyncWorker();
-  ensureCues().catch((e) => console.warn('cues', e.message)); // rep-leg cues into Telnyx media storage; by URL until then
 });

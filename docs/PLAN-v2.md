@@ -1,4 +1,4 @@
-# Eazybe Dialer — v2 plan (team dialer, HubSpot-driven queue)
+# Hans Dialer — v2 plan (team dialer, HubSpot-driven queue)
 
 Decided 2026-09-06 with Divyanshu. Supersedes PLAN.md §1 rows "HubSpot", "Auth", §14 "multi-rep".
 Deadline: dialer fully working for 3 reps by **Mon 2026-09-08 14:00 IST**.
@@ -8,10 +8,10 @@ Deadline: dialer fully working for 3 reps by **Mon 2026-09-08 14:00 IST**.
 | Question | Answer |
 |---|---|
 | Rep audio | **Browser only.** No phone/browser choice in the UI. Server keeps the PSTN branch dormant (`mode:'phone'` on /connect) as break-glass; nothing exposes it. |
-| Lead source | **HubSpot checkbox.** Rep ticks `eazybe_dial_queue` on a contact they own; the dialer pulls it. CSV upload stays as a secondary path. |
+| Lead source | **HubSpot checkbox.** Rep ticks `hans_dial_queue` on a contact they own; the dialer pulls it. CSV upload stays as a secondary path. |
 | Lead ownership | **HubSpot contact owner = rep.** `users.hubspot_owner_id` ↔ `hubspot_owner_id` on the contact. Leads are never shared: every queue/stats/activity query is scoped to `leads.user_id`. |
 | Sync | Server polls HubSpot every 3 min per rep + **Sync now** button. Unchecking in HubSpot removes a queued/later lead on the next poll (never cuts a call in progress). |
-| Write-back | After every dispositioned call: `eazybe_last_outcome`, `eazybe_last_called_at`, `eazybe_attempts`, `eazybe_next_call_at`. When a lead leaves the queue (connected / exhausted / invalid number) the checkbox is cleared. Notes write-back: later. |
+| Write-back | After every dispositioned call: `hans_last_outcome`, `hans_last_called_at`, `hans_attempts`, `hans_next_call_at`. When a lead leaves the queue (connected / exhausted / invalid number) the checkbox is cleared. Notes write-back: later. |
 | Phone field | `phone`, fall back to `mobilephone`. Timezone from `country` (existing table), dial code fallback. |
 | One-at-a-time ("Power") | JustCall Power Dialer: 1 lead per burst; **saving the outcome auto-dials the next lead**. Pause/Resume button. No-answer also advances. Queue empty / all out of hours → stops and says so. |
 | Multiple at once ("Burst") | Existing 2-leg burst: first answer wins, others cancelled and retried next burst. Timezone-gated (lead local 10:00–19:00), unchanged. |
@@ -32,7 +32,7 @@ Deadline: dialer fully working for 3 reps by **Mon 2026-09-08 14:00 IST**.
 | 1 | `lib/queue.js` | `claimLeads/peekLeads(userId, limit, segment)`; `eligibleWhere` adds `l.user_id = $uid`. `sweepStuckLeads` unchanged. |
 | 2 | `routes/session.js` | `/burst` takes `{legs: 1|2}` (clamped to `LEGS_PER_BURST`). `/dial` inserts with `user_id`. `/connect` defaults to browser. `/disposition` → write-back (fire-and-forget). |
 | 3 | `routes/leads.js` | `/stats`, `/next`, `/activity` scoped to the rep. `/import` stamps `user_id`+`source='csv'`. New `POST /sync` (button). |
-| 4 | `lib/hubspot.js` (new) | `pullQueue(user)`: contacts search `eazybe_dial_queue=true AND hubspot_owner_id=<rep>`, paginate 100/page, upsert leads, stop queued/later leads no longer checked, re-queue re-checked ones. `pushCall(lead)`: PATCH the 4 properties (+ clear checkbox when done). Reads property definitions once so date vs datetime is formatted right. Token: `HUBSPOT_TOKEN`. |
+| 4 | `lib/hubspot.js` (new) | `pullQueue(user)`: contacts search `hans_dial_queue=true AND hubspot_owner_id=<rep>`, paginate 100/page, upsert leads, stop queued/later leads no longer checked, re-queue re-checked ones. `pushCall(lead)`: PATCH the 4 properties (+ clear checkbox when done). Reads property definitions once so date vs datetime is formatted right. Token: `HUBSPOT_TOKEN`. |
 | 5 | `index.js` | Poll loop every `HUBSPOT_POLL_MINUTES` (default 3) over users with `hubspot_owner_id`; emits `queue:synced` so Up next refreshes. |
 | 6 | `lib/burst.js` | `onHangup` no-answer/failed path also triggers write-back. Otherwise untouched (race/bridge logic is proven). |
 | 7 | `scripts/add-user.mjs` (new) | `node scripts/add-user.mjs <email> <password> <hubspot_owner_id>` — creates/updates a rep. |
@@ -49,17 +49,17 @@ Deadline: dialer fully working for 3 reps by **Mon 2026-09-08 14:00 IST**.
 
 Private app (Settings → Integrations → Private Apps) scopes: `crm.objects.contacts.read`, `crm.objects.contacts.write`, `crm.schemas.contacts.read`. Paste token as `HUBSPOT_TOKEN` in server/.env and Railway (`dialer` service).
 
-Contact properties (Settings → Properties → Create; group "Eazybe dialer"):
+Contact properties (Settings → Properties → Create; group "Hans dialer"):
 
 | Internal name | Label | Field type |
 |---|---|---|
-| `eazybe_dial_queue` | Eazybe · Dial queue | Single checkbox |
-| `eazybe_last_outcome` | Eazybe · Last call outcome | Dropdown select — internal values exactly `connected`, `no_answer`, `later`, `invalid` (labels: Connected, No answer, Call later, Invalid number) |
-| `eazybe_last_called_at` | Eazybe · Last called at | Date and time picker (Date picker if that's the only option) |
-| `eazybe_attempts` | Eazybe · Call attempts | Number |
-| `eazybe_next_call_at` | Eazybe · Next call at | Date and time picker (Date picker if that's the only option) |
+| `hans_dial_queue` | Hans · Dial queue | Single checkbox |
+| `hans_last_outcome` | Hans · Last call outcome | Dropdown select — internal values exactly `connected`, `no_answer`, `later`, `invalid` (labels: Connected, No answer, Call later, Invalid number) |
+| `hans_last_called_at` | Hans · Last called at | Date and time picker (Date picker if that's the only option) |
+| `hans_attempts` | Hans · Call attempts | Number |
+| `hans_next_call_at` | Hans · Next call at | Date and time picker (Date picker if that's the only option) |
 
-Rep workflow in HubSpot: open a contact you own → tick "Eazybe · Dial queue" → within 3 min (or Sync now) it appears in Up next.
+Rep workflow in HubSpot: open a contact you own → tick "Hans · Dial queue" → within 3 min (or Sync now) it appears in Up next.
 
 ## 6. Monday gate — user-side, code cannot fix
 

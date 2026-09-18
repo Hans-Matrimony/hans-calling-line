@@ -14,6 +14,6 @@ export const DAILY_CAP_PER_NUMBER = 100; // was 50; lowered again if a caller ID
 export const LEAD_LOCAL_WINDOW = { start: 10, end: 19 }; // lead local time, [start, end)
 export const IGNORE_WINDOWS = process.env.IGNORE_WINDOWS === 'true';
 // Call recording (plan 2026-09-10): every bridged conversation, silently, unless switched off on Railway.
-// RECORD_BEEP=true plays Telnyx's beep to the lead when recording starts (off by owner's decision).
+// RECORD_BEEP=true plays a beep to the lead when recording starts (off by owner's decision).
 export const RECORD_CALLS = process.env.RECORD_CALLS !== 'false';
 export const RECORD_BEEP = process.env.RECORD_BEEP === 'true';

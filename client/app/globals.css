@@ -1,5 +1,5 @@
-/* Eazybe Dialer — light console.
-   White paper, Eazybe blue for the one primary action, and three call-state lamps that never
+/* Hans Dialer — light console.
+   White paper, Hans blue for the one primary action, and three call-state lamps that never
    compete with it: amber = ringing, green = live, coral = hang up. --blue is the single brand token. */
 :root {
   --blue: #1e5eff;

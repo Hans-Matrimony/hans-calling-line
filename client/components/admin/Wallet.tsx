@@ -21,7 +21,7 @@ function Card({ title, p }: { title: string; p: WalletPeriod }) {
         <span>rep audio sessions</span><b>{money(p.rep_spend, ccy)}</b>
         <span>legs billed</span><b>{p.legs}</b>
         <span>dials · connects</span><b>{p.dials} · {p.connects}</b>
-        {p.awaiting_cost > 0 && <><span>not yet billed by Telnyx</span><b>{p.awaiting_cost} leg{p.awaiting_cost === 1 ? '' : 's'}</b></>}
+        {p.awaiting_cost > 0 && <><span>not yet billed by Plivo</span><b>{p.awaiting_cost} leg{p.awaiting_cost === 1 ? '' : 's'}</b></>}
       </div>
     </div>
   );
@@ -49,7 +49,7 @@ export default function Wallet({ tick }: { tick: number }) {
     <section className="ad-screen ad-wallet">
       <div className="ad-two">
         <div className="panel">
-          <div className="panel-head"><h2 className="panel-title">Telnyx balance</h2><button className="btn btn-mini" onClick={() => setBump((b) => b + 1)}><Refresh />Refresh</button></div>
+          <div className="panel-head"><h2 className="panel-title">Plivo balance</h2><button className="btn btn-mini" onClick={() => setBump((b) => b + 1)}><Refresh />Refresh</button></div>
           {!bal ? <p className="empty">Loading…</p> : 'error' in bal ? <p className="ad-err">{bal.error}</p> : (
             <>
               <div className="big">{money(bal.availableCredit, bal.currency)}</div>
@@ -64,7 +64,7 @@ export default function Wallet({ tick }: { tick: number }) {
         </div>
         <div className="panel">
           <div className="panel-head"><h2 className="panel-title">Where the money goes<b>30 days</b></h2></div>
-          {parts.length === 0 ? <p className="empty">No cost events yet. Telnyx sends one per call leg a few minutes after it ends — if this stays empty after a call, the Call Control app needs call-cost-in-webhooks switched on.</p> : (
+          {parts.length === 0 ? <p className="empty">No billed calls yet. Call charges are fetched from Plivo after hangup; recently ended calls may take a few minutes to appear.</p> : (
             <div className="ad-bars">
               {parts.map((p) => (
                 <div className="ad-bar" key={p.part}><span className="n">{p.part}</span><div><div className="t" style={{ width: `${(100 * p.cost / pmax).toFixed(1)}%` }} /></div><span className="c">{money(p.cost)}</span></div>
@@ -83,7 +83,7 @@ export default function Wallet({ tick }: { tick: number }) {
       )}
 
       <div className="panel">
-        <div className="panel-head"><h2 className="panel-title">Spend by day<b>30 days · IST</b></h2><div className="ad-legend"><span><i style={{ background: 'var(--blue)' }} />Telnyx spend</span></div></div>
+        <div className="panel-head"><h2 className="panel-title">Spend by day<b>30 days · IST</b></h2><div className="ad-legend"><span><i style={{ background: 'var(--blue)' }} />Plivo spend</span></div></div>
         {bands.length ? <Columns bands={bands} series={[{ key: 'spend', label: 'Spend', color: 'var(--blue)' }]} yMax={sc.yMax} ticks={sc.ticks} height={200} bw={12} labelEvery={5} fmt={(v) => money(v)} /> : <p className="empty">Nothing billed yet.</p>}
         <p className="hint" style={{ margin: '8px 0 0' }}>Every leg counts: the lead legs of a burst including the one that lost, dial failures, and every rep audio session. Per-dial cost is all-in so it is honest.</p>
       </div>
@@ -94,7 +94,7 @@ export default function Wallet({ tick }: { tick: number }) {
           {h.data && (
             <>
               <div className="h"><span className={'lamp ' + (h.data.recording.on ? 'green' : 'grey')} /><span>Recording {h.data.recording.on ? 'on' : 'off'}{h.data.recording.beep ? ', with a beep' : ', silent'} · {h.data.recording.saved} saved{h.data.recording.errors ? ` · ${h.data.recording.errors} failed` : ''}</span></div>
-              <div className="h"><span className={'lamp ' + (h.data.cost.rows ? 'green' : 'amber')} /><span>Telnyx cost events: {h.data.cost.rows ? `${h.data.cost.rows} received, last ${since(new Date(h.data.cost.lastAt!))}` : 'none yet'}</span></div>
+              <div className="h"><span className={'lamp ' + (h.data.cost.rows ? 'green' : 'amber')} /><span>Plivo cost events: {h.data.cost.rows ? `${h.data.cost.rows} received, last ${since(new Date(h.data.cost.lastAt!))}` : 'none yet'}</span></div>
               <div className="h"><span className={'lamp ' + (!hs?.configured ? 'grey' : hs.ok === false ? 'coral' : 'green')} /><span>HubSpot inlet: {!hs?.configured ? 'not connected — HUBSPOT_TOKEN is not set' : hs.ok === false ? hs.error : 'working'}</span></div>
               <div className="h"><span className={'lamp ' + (!hs?.configured ? 'grey' : hs.write?.ok === false ? 'coral' : hs.write?.ok ? 'green' : 'grey')} /><span>HubSpot call logging: {!hs?.configured ? 'off' : hs.write?.ok === false ? hs.write.error : `${hs.logged} logged${hs.failed ? ` · ${hs.failed} not logged` : ''}`}</span></div>
             </>

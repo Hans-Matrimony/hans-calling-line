@@ -194,7 +194,7 @@ export async function leadDetail(id) {
   return { ...lead, attempts };
 }
 
-/** Telnyx spend for one period. Account-wide: the wallet is the account's money, not a rep's. */
+/** Provider spend for one period. Account-wide: the wallet is the account's money, not a rep's. */
 export async function wallet(from, to) {
   const T = `
     WITH p AS (SELECT ($1::date)::timestamp AT TIME ZONE '${TZ}' AS f, ($2::date + 1)::timestamp AT TIME ZONE '${TZ}' AS t),

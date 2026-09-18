@@ -53,10 +53,10 @@ function Keypad({ d }: { d: D }) {
   const [local, setLocal] = useState('');
   const [from, setFrom] = useState('');
   const digitsRef = useRef<HTMLInputElement>(null);
-  useEffect(() => { setIso(pref('eazybe.hs.cc', 'IN')); digitsRef.current?.focus(); }, []);
+  useEffect(() => { setIso(pref('hans.hs.cc', 'IN')); digitsRef.current?.focus(); }, []);
   useEffect(() => { // remembered caller ID if still configured and under its cap, else the first that is
     if (!d.fromNumbers.length) return;
-    const want = from || pref('eazybe.hs.from', '');
+    const want = from || pref('hans.hs.from', '');
     const ok = d.fromNumbers.find((n) => n.number === want && n.available);
     const next = ok?.number ?? d.fromNumbers.find((n) => n.available)?.number ?? d.fromNumbers[0].number;
     if (next !== from) setFrom(next);
@@ -70,8 +70,8 @@ function Keypad({ d }: { d: D }) {
   const canDial = ready && valid;
   const regionOf = (num: string | null) => { const r = d.fromNumbers.find((n) => n.number === num)?.region; return r ? REGION[r] : null; };
 
-  const chooseIso = (v: string) => { setIso(v); savePref('eazybe.hs.cc', v); };
-  const chooseFrom = (v: string) => { setFrom(v); savePref('eazybe.hs.from', v); };
+  const chooseIso = (v: string) => { setIso(v); savePref('hans.hs.cc', v); };
+  const chooseFrom = (v: string) => { setFrom(v); savePref('hans.hs.from', v); };
   const type = (raw: string) => {
     const s = raw.trim();
     if (iso && (s.startsWith('+') || s.startsWith('00'))) { // a pasted full number: split the dial code off into the picker

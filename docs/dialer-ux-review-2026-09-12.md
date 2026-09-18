@@ -1,4 +1,4 @@
-Eazybe Auto dial and Burst dial — usability review
+Hans Auto dial and Burst dial — usability review
 Research date: 12 September 2026
 
 **Recommendation: build a three-day follow-up sequence connected to HubSpot, with continuous dialing during an active SDR session.** The system should own retry scheduling and progression; the SDR should handle conversations and meaningful outcomes. The screen must explain the active person, sequence progress, next attempt and HubSpot write status.
@@ -59,13 +59,13 @@ Avoid generating a task for every automatic unsuccessful attempt. Mirror the seq
 
 Show a concise status on both sides: **Day 2 of 3 · 4/9 attempted · Next 15:30 their time · Owner Alex**. In the dialer, separately show **Saved in dialer**, **HubSpot pending**, **Synced to HubSpot** or **Sync failed — retrying** for the specific outcome and next action. A transient HubSpot delay should not make the rep re-enter an outcome; retries must update the same activity/task without duplicates. A local save failure must block the next call. If current ownership or eligibility cannot be trusted, pause affected contacts rather than silently treating stale CRM data as current.
 
-While CallHippo or AceConnect remain active, ingest their relevant CRM call/outcome events or assign a single dialing owner/tool per contact. Otherwise an SDR can connect in one tool while Eazybe continues its no-response sequence. Call history, suppression and attempt limits need to account for that migration period.
+While CallHippo or AceConnect remain active, ingest their relevant CRM call/outcome events or assign a single dialing owner/tool per contact. Otherwise an SDR can connect in one tool while Hans continues its no-response sequence. Call history, suppression and attempt limits need to account for that migration period.
 
 Start by exposing sequence status, attempts and next action as HubSpot properties and saved views. A later embedded HubSpot panel can show the same context and session controls if feasible. A full CRM extension rewrite is not necessary to prove the automation.
 
 **What competitors teach us**
 
-| Reference | Documented behavior | Useful lesson for Eazybe |
+| Reference | Documented behavior | Useful lesson for Hans |
 | --- | --- | --- |
 | [CallHippo Power Dialer](https://help.callhippo.com/power-dialer/) | Automatic progression and configurable per-contact retries by attempts, interval and outcome/status. | Your existing vendor offers an automation benchmark beyond the click-to-call workflow you used. Compare that behavior, not just its dialpad. |
 | [CallHippo HubSpot integration](https://help.callhippo.com/hubspot/) | CRM calling, call logging and outcome mapping; its guide limits after-call-work sync to changes made in that screen. | Outcome mapping and when edits sync must be explicit. We should support reliable correction of a saved result. |
@@ -123,7 +123,7 @@ Make due callbacks a distinct priority lane. Today they become eligible at the c
 
 5. **A complete next step.** “Interested” should lead naturally to Book meeting, Create follow-up or Open a prepared message. A saved note alone may leave the rep with more work in another tab. Add confirmed HubSpot task status beside the outcome, rather than treating a successful dialer save as proof every external action completed.
 
-**An Eazybe-specific direction to explore**
+**An Hans-specific direction to explore**
 
 A compact **Why this call?** brief could show the last meaningful interaction, last promise, relevant HubSpot stage and suggested next action. If the team works from WhatsApp, combine that context with a prepared WhatsApp follow-up that the rep reviews and sends. Keep permissions and matching explicit; the dialer code reviewed here does not establish access to the team's WhatsApp conversations.
 

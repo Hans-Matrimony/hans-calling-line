@@ -5,3 +5,7 @@ data/*.csv
 out/
 .env.local
 .claude/settings.local.json
+codex-session-*.md
+.env.*
+!.env.example
+.local/

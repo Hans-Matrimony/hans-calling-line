@@ -1,8 +1,8 @@
-# Eazybe Dialer · UI improvement proposal
+# Hans Dialer · UI improvement proposal
 
 Status: approved and implemented in the production frontend on 12 September 2026. See [implementation and verification](../ui-implementation/README.md). The sample below remains the original design reference.
 
-The direction is a clearer calling workspace built around the conversation: queue on the left, the current lead and call controls in the center, contact context on the right. It keeps Eazybe’s blue, Hanken Grotesk, Saira Semi Condensed, IBM Plex Mono, and existing icon vocabulary.
+The direction is a clearer calling workspace built around the conversation: queue on the left, the current lead and call controls in the center, contact context on the right. It keeps Hans’s blue, Hanken Grotesk, Saira Semi Condensed, IBM Plex Mono, and existing icon vocabulary.
 
 ## Review the sample
 

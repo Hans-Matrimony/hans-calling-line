@@ -5,13 +5,13 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 let exitCode = 0;
-for (const file of process.argv.slice(2).length ? process.argv.slice(2) : ['cascade-test.mjs', 'hubspot-test.mjs', 'admin-test.mjs', 'reliability-test.mjs']) {
+for (const file of process.argv.slice(2).length ? process.argv.slice(2) : ['cascade-test.mjs', 'hubspot-test.mjs', 'admin-test.mjs', 'reliability-test.mjs', 'plivo-test.mjs']) {
   const db = await PGlite.create();
   const server = new PGLiteSocketServer({ db, host: '127.0.0.1', port: 0, maxConnections: 25 });
   await server.start();
   const connection = server.getServerConn();
   const env = { ...process.env, DATABASE_URL: connection.startsWith('postgres') ? connection : 'postgresql://postgres:postgres@' + connection + '/postgres',
-    HUBSPOT_TOKEN: '', TELNYX_API_KEY: '', EAZYBE_TEST_DATABASE: 'isolated', DOTENV_CONFIG_PATH: fileURLToPath(new URL('./.no-test-env', import.meta.url)),
+    HUBSPOT_TOKEN: '', PLIVO_AUTH_ID: '', PLIVO_AUTH_TOKEN: '', PLIVO_APPLICATION_ID: '', HANS_TEST_DATABASE: 'isolated', DOTENV_CONFIG_PATH: fileURLToPath(new URL('./.no-test-env', import.meta.url)),
     RECORD_CALLS: 'false', SESSION_SECRET: 'isolated-test-secret', FROM_NUMBER_US: '+12025550100',
     FROM_NUMBER_INDIA: '+919810000000', FROM_NUMBER_EU: '+442079460000' };
   try {

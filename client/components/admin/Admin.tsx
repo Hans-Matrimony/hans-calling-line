@@ -30,7 +30,7 @@ function usePersisted<T>(key: string, initial: T): [T, (v: T | ((p: T) => T)) =>
 
 /** The manager's console: the dialer's shell, one filter row, six screens. Admins never dial. */
 export default function Admin({ me, onLogout }: { me: Me; onLogout: () => void }) {
-  const [ui, setUi] = usePersisted<{ tab: Tab; filters: Filters }>('eazybe.admin', { tab: 'overview', filters: DEFAULT_FILTERS });
+  const [ui, setUi] = usePersisted<{ tab: Tab; filters: Filters }>('hans.admin', { tab: 'overview', filters: DEFAULT_FILTERS });
   const { tab, filters } = ui;
   const setTab = (t: Tab) => setUi((p) => ({ ...p, tab: t }));
   const setFilters = (f: Partial<Filters>) => setUi((p) => ({ ...p, filters: { ...p.filters, ...f } }));
@@ -61,7 +61,7 @@ export default function Admin({ me, onLogout }: { me: Me; onLogout: () => void }
   return (
     <div className="ad-shell">
       <aside className="side">
-        <div className="brand"><span className="brand-name">Eazybe</span><span className="brand-sub">Admin</span></div>
+        <div className="brand"><span className="brand-name">Hans</span><span className="brand-sub">Admin</span></div>
         {TABS.map((t) => (
           <button key={t.id} className={'nav' + (tab === t.id ? ' on' : '')} onClick={() => setTab(t.id)} aria-current={tab === t.id ? 'page' : undefined}>
             <t.icon />{t.label}

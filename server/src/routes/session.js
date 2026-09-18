@@ -1,6 +1,6 @@
 import express from 'express';
 import { requireAuth } from '../auth.js';
-import { q, transaction } from '../db/pool.js';
+import { q, transaction, withLock } from '../db/pool.js';
 import { emitToUser, pokeAdmins } from '../io.js';
 import { queueCallSync } from '../lib/hubspotJobs.js';
 import { snapshot, reserveBurst } from '../lib/sessionState.js';
@@ -8,7 +8,7 @@ import { repUp, activeBurst } from '../state.js';
 import { claimLeads, claimManual, releaseLead, pickFromNumber, sweepStuckLeads, listFromNumbers } from '../lib/queue.js';
 import { normalizePhone } from '../lib/import.js';
 import { startBurst, cancelOpenLegs, stopRepAudio, leadCard, burstLegs, previewCard } from '../lib/burst.js';
-import { dialRep, hangup, ensureCredential, webrtcToken, sipDestination, sendDtmf } from '../telnyx.js';
+import { dialRep, hangup, ensureCredential, webrtcToken, sipDestination, sendDtmf } from '../plivo.js';
 import { pullBeforeRead } from '../lib/hubspot.js';
 import { LEGS_PER_BURST } from '../config.js';
 
@@ -25,31 +25,33 @@ const MSG = {
 };
 
 router.get('/state', async (req, res) => {
-  const { rows: [u] } = await q('SELECT phone, rep_leg_destination, telnyx_session_call_id, audio_mode, sip_username, rep_connected FROM users WHERE id = $1', [req.userId]);
+  const { rows: [u] } = await q('SELECT phone, rep_leg_destination, telnyx_session_call_id, audio_mode, plivo_sip_username AS sip_username, rep_connected FROM users WHERE id = $1', [req.userId]);
   res.json({ ...u, repUp: u.rep_connected, ...(await snapshot(req.userId)) });
 });
 
-// Browser audio (plan s9): 24h JWT for the softphone, minted from the user's telephony credential.
+// Provision once per rep; concurrent tabs share the same endpoint. SIP passwords stay server-side.
 router.post('/webrtc-token', async (req, res) => {
-  const { rows: [u] } = await q('SELECT id, email, telnyx_credential_id, sip_username FROM users WHERE id = $1', [req.userId]);
-  const cred = await ensureCredential(u);
-  if (cred.fresh) {
-    await q('UPDATE users SET telnyx_credential_id = $2, sip_username = $3 WHERE id = $1', [u.id, cred.id, cred.sip_username]);
-    await new Promise((r) => setTimeout(r, 5000)); // Telnyx: credential needs a few seconds before its token logs in
-  }
-  res.json({ token: await webrtcToken(cred.id), sipUsername: cred.sip_username });
+  const result = await withLock('plivo-endpoint:' + req.userId, async () => {
+    const { rows: [u] } = await q('SELECT id, email, plivo_endpoint_id, plivo_sip_username FROM users WHERE id = $1', [req.userId]);
+    const cred = await ensureCredential(u);
+    if (cred.fresh) await q('UPDATE users SET plivo_endpoint_id = $2, plivo_sip_username = $3 WHERE id = $1', [u.id, cred.id, cred.sip_username]);
+    return { token: await webrtcToken(cred.sip_username), sipUsername: cred.sip_username };
+  });
+  if (!result) return res.status(409).json({ error: 'Audio setup is already in progress. Try again shortly.' });
+  res.json(result);
 });
 
 // Connect me (plan s8): ring the rep once; the leg stays open all session.
 // mode 'phone' rings his handset, 'browser' rings the WebRTC softphone (which auto-answers).
 router.post('/connect', async (req, res) => {
   const mode = req.body?.mode === 'browser' ? 'browser' : 'phone';
+  console.log('[connect] user', req.userId, 'mode', mode);
   const raw = String(req.body?.phone ?? '').trim();
   const phone = raw ? normalizePhone(raw, 'india') : ''; // rep is in India: bare 10 digits -> +91
   if (mode === 'phone' && raw && !phone) return res.status(400).json({ error: `could not parse phone "${raw}" - use +E.164, e.g. +9198xxxxxxxx` });
   if (phone) await q('UPDATE users SET phone = $2 WHERE id = $1', [req.userId, phone]);
 
-  const { rows: [u] } = await q('SELECT phone, sip_username, telnyx_session_call_id FROM users WHERE id = $1', [req.userId]);
+  const { rows: [u] } = await q('SELECT phone, plivo_sip_username AS sip_username, telnyx_session_call_id FROM users WHERE id = $1', [req.userId]);
   const dest = mode === 'browser' ? (u.sip_username && sipDestination(u.sip_username)) : u.phone;
   if (!dest) return res.status(400).json({ error: mode === 'browser' ? 'softphone not provisioned yet (request a token first)' : 'enter your phone number first' });
   await q('UPDATE users SET audio_mode = $2, rep_leg_destination = $3 WHERE id = $1', [req.userId, mode, dest]);

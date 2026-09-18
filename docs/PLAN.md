@@ -1,4 +1,4 @@
-# Eazybe Dialer — MVP Plan (FINAL)
+# Hans Dialer — MVP Plan (FINAL)
 
 **Goal:** prove automated burst dialing + retry cadence raises connects on non-India leads.
 **Rep:** Himanshu (ROTW inbound). **Baseline to beat: 13% connect rate.**

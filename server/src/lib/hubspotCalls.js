@@ -11,7 +11,7 @@ import { queueCallSync } from './hubspotJobs.js';
 import { pokeAdmins } from '../io.js';
 
 const CALL_TO_CONTACT = 194;
-const FOLDER = '/eazybe-dialer/recordings';
+const FOLDER = '/hans-dialer/recordings';
 const digits = (s) => String(s ?? '').replace(/\D/g, '');
 const publicUrl = () => String(process.env.PUBLIC_URL ?? '').replace(/[/]$/, '');
 
@@ -112,13 +112,13 @@ async function writeCall(callId) {
     if (!contact) { await q(`UPDATE calls SET hubspot_error = 'no HubSpot contact for this number' WHERE id = $1`, [callId]); return; }
 
     const sub = c.sub_outcome ? SUB[c.sub_outcome] ?? c.sub_outcome : null;
-    const reference = 'Eazybe call reference: ' + c.hubspot_sync_key;
+    const reference = 'Hans call reference: ' + c.hubspot_sync_key;
     const body = [sub, c.reason, c.notes, reference].filter(Boolean).join(' · ');
     const properties = {
       hs_timestamp: new Date(c.started_at).toISOString(),
       hs_call_direction: 'OUTBOUND',
       hs_call_status: out.status,
-      hs_call_title: 'Eazybe dialer · ' + (sub ?? out.label),
+      hs_call_title: 'Hans dialer · ' + (sub ?? out.label),
       hs_call_from_number: c.from_number, hs_call_to_number: c.to_number,
       ...(c.answered_at && c.duration != null ? { hs_call_duration: String(c.duration * 1000) } : {}),
       ...(body ? { hs_call_body: body } : {}),
@@ -230,7 +230,7 @@ function recordingLink(c) {
   return null;
 }
 
-/** Once the recording exists at Telnyx: copy it into HubSpot Files, then put the link on the
+/** Once the recording exists at the provider: copy it into HubSpot Files, then put the link on the
  *  engagement (create-time if the engagement does not exist yet, PATCH if it does). */
 async function uploadRecording(callId) {
   if (!configured()) return;

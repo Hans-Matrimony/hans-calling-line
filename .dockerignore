@@ -1,0 +1,17 @@
+**/node_modules
+**/.next
+client/out
+client/.ui-test
+client/.eslintcache
+server/.local
+.local
+data
+docs
+.git
+.gitignore
+*.log
+codex-session-*.md
+.env
+.env.*
+Dockerfile
+.dockerignore

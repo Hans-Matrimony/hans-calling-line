@@ -12,7 +12,7 @@ import { hubspotPanel } from './leads.js';
 import { balance } from '../lib/costs.js';
 import { getSettings, setSetting, DEFAULTS } from '../lib/settings.js';
 import { cancelOpenLegs } from '../lib/burst.js';
-import { hangup } from '../telnyx.js';
+import { hangup } from '../plivo.js';
 import { pokeAdmins } from '../io.js';
 import { RECORD_CALLS, RECORD_BEEP } from '../config.js';
 

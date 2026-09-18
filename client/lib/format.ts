@@ -75,7 +75,7 @@ export const DIAL_TIMEOUT = 30; // seconds a lead rings before the dialer gives 
 // One pair of strings for "nothing to dial", shared by the campaign pages and Up next.
 /** There are two inlets now, so an empty queue has to name the one this rep actually has. */
 export const emptyQueue = (hubspot?: boolean) => hubspot
-  ? 'Your queue is empty — tick "Eazybe · Dial queue" on a contact in HubSpot, or press Upload CSV.'
+  ? 'Your queue is empty — tick "Hans · Dial queue" on a contact in HubSpot, or press Upload CSV.'
   : 'Your queue is empty — press Upload CSV to add leads.';
 export const NOT_DUE = 'Nobody is due right now — check Up next for each lead’s retry time and calling hours (10:00–19:00 their time).';
 

@@ -32,7 +32,7 @@ export default function Users({ me, tick }: { me: Me; tick: number }) {
       <div className="panel">
         <div className="panel-head"><h2 className="panel-title">Add a user</h2><span className="hint">a rep&apos;s email must be their HubSpot login email, or the HubSpot inlet cannot find their contacts</span></div>
         <form className="ad-form" onSubmit={add}>
-          <label>Email<input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@eazybe.com" autoComplete="off" /></label>
+          <label>Email<input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@hansmatrimony.com" autoComplete="off" /></label>
           <label>Password<input type="password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="8+ characters" autoComplete="new-password" /></label>
           <label>Role<select value={role} onChange={(e) => setRole(e.target.value as 'rep' | 'admin')}><option value="rep">Rep — dials</option><option value="admin">Admin — this dashboard</option></select></label>
           <button className="btn btn-blue" disabled={busy}><UserPlus />Add</button>

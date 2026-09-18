@@ -99,7 +99,7 @@ export function useDialer(me: Me) {
   const [card, setCard] = useState<Card | null>(null);
   const [answeredAt, setAnsweredAt] = useState<Date | null>(null);
   const [duration, setDuration] = useState<number | null>(null);
-  const [endCause, setEndCause] = useState<string | null>(null);   // why the last call ended: rep_hangup | bridge_failed | a Telnyx cause
+  const [endCause, setEndCause] = useState<string | null>(null);   // why the last call ended: rep_hangup | bridge_failed | a provider hangup cause
   const [stats, setStats] = useState<Stats | null>(null);
   const [fromNumbers, setFromNumbers] = useState<FromNumber[]>([]);
   const [upNext, setUpNext] = useState<NextLead[] | null>(null); // null = loading
@@ -131,7 +131,7 @@ export function useDialer(me: Me) {
   // Keep an unsaved note through reloads in this tab, scoped to this rep and call.
   useEffect(() => {
     if (!card) { draftCall.current = null; return; }
-    const key = `eazybe.note.${me.id}.${card.callId}`;
+    const key = `hans.note.${me.id}.${card.callId}`;
     try {
       if (draftCall.current !== card.callId) {
         draftCall.current = card.callId;
@@ -221,6 +221,8 @@ export function useDialer(me: Me) {
     // A HubSpot pull changed this rep's queue (a tick, an untick): say what arrived and show it, no reload.
     socket.on('queue:synced', (c: SyncResult) => { sys('HubSpot: ' + describePull(c)); refresh(); });
     socket.on('queue:changed', refresh);
+    // A reverted call joined the rep's audio: the caller is on the line right now.
+    socket.on('inbound:caller', (p: { phone?: string | null }) => { sys('Incoming callback' + (p.phone ? ' — ' + p.phone : '') + ' joined your audio'); refresh(); });
     socket.on('call:ended', (p: { callId: number; duration: number | null; cause?: string }) => {
       // The red button and the hangup webhook both report this call: one row, one refresh.
       const id = 'end' + p.callId;
@@ -284,6 +286,9 @@ export function useDialer(me: Me) {
     connect: () => runCmd('connect audio', async () => {
       const { token } = await post<{ token: string }>('/api/session/webrtc-token');
       await softphone.connect(token);
+      // Plivo needs a couple of seconds after onLogin before the SIP registration is routable;
+      // dialing sooner makes the rep leg die with endpoint_not_registered.
+      await new Promise((r) => setTimeout(r, 4000));
       await post('/api/session/connect', { mode: 'browser' });
     }),
     // Browser hangs up first so the SDK never BYEs a leg the server already ended; the server call then just clears state.
@@ -337,7 +342,7 @@ export function useDialer(me: Me) {
       const bits = [lbl, opts.reason, n, retry].filter(Boolean).join(' · ');
       tapePush(feedKind(outcome, opts.subOutcome), who, bits, card.phone, company && company !== who ? company : undefined);
       setLastSaved({ card: { ...card, name: callerName.trim() || card.name }, label: lbl, note: n, status: saved.status, nextCallAt: saved.nextCallAt, duration });
-      try { sessionStorage.removeItem(`eazybe.note.${me.id}.${card.callId}`); } catch { /* optional tab storage */ }
+      try { sessionStorage.removeItem(`hans.note.${me.id}.${card.callId}`); } catch { /* optional tab storage */ }
       setCard(null); setDuration(null); setAnsweredAt(null); setEndCause(null); setPhase('idle'); setLegs([]); refresh();
       setNote(''); setCallerName(''); setCallerCompany(''); setLastCall((lc) => lc && { ...lc, outcome });
       setRun((r) => { if (r?.endAfter) { setLastRun({ mode: r.mode, since: r.since, until: new Date() }); return null; } return r; });
