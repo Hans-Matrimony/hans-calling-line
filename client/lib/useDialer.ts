@@ -134,6 +134,35 @@ export function useDialer(me: Me) {
   inboundLiveRef.current = inboundLive;
   const draftCall = useRef<number | null>(null);
 
+  // Incoming-call ring on the rep's machine, generated in the browser so no asset is fetched:
+  // a classic two-tone ring every 2 s until the caller is answered, rejected or gone.
+  const ringRef = useRef<{ ctx: AudioContext; timer: ReturnType<typeof setInterval> } | null>(null);
+  const stopRing = useCallback(() => {
+    const r = ringRef.current; ringRef.current = null;
+    if (!r) return;
+    clearInterval(r.timer);
+    void r.ctx.close().catch(() => { /* already closing */ });
+  }, []);
+  const startRing = useCallback(() => {
+    if (ringRef.current) return;
+    try {
+      const ctx = new AudioContext();
+      const beep = () => {
+        for (const freq of [440, 480]) {
+          const o = ctx.createOscillator(); const g = ctx.createGain();
+          o.type = 'sine'; o.frequency.value = freq;
+          g.gain.setValueAtTime(0.0001, ctx.currentTime);
+          g.gain.exponentialRampToValueAtTime(0.22, ctx.currentTime + 0.02);
+          g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.9);
+          o.connect(g); g.connect(ctx.destination);
+          o.start(); o.stop(ctx.currentTime + 1);
+        }
+      };
+      beep();
+      ringRef.current = { ctx, timer: setInterval(beep, 2000) };
+    } catch { /* no audio device: the banner alone remains */ }
+  }, []);
+
   // Keep an unsaved note through reloads in this tab, scoped to this rep and call.
   useEffect(() => {
     if (!card) { draftCall.current = null; return; }
@@ -230,11 +259,12 @@ export function useDialer(me: Me) {
     // Inbound (revert) calls: the caller waits on hold until the rep answers or rejects.
     socket.on('inbound:incoming', (p: { inboundId: string; phone: string }) => {
       setInbound({ id: p.inboundId, phone: p.phone });
+      startRing();
       push('dialing', 'Incoming callback — ' + p.phone, 'Answer or send to the queue');
     });
-    socket.on('inbound:accepted', (p: { inboundId: string; phone?: string | null }) => { setInbound(null); setInboundLive({ id: p.inboundId, phone: p.phone ?? 'callback' }); sys('On the line — incoming callback'); });
-    socket.on('inbound:live', (p: { inboundId: string; phone?: string | null }) => { setInbound(null); setInboundLive({ id: p.inboundId, phone: p.phone ?? 'callback' }); sys('On the line — incoming callback'); });
-    socket.on('inbound:ended', () => { setInbound(null); setInboundLive(null); sys('Callback call ended'); refresh(); });
+    socket.on('inbound:accepted', (p: { inboundId: string; phone?: string | null }) => { stopRing(); setInbound(null); setInboundLive({ id: p.inboundId, phone: p.phone ?? 'callback' }); sys('On the line — incoming callback'); });
+    socket.on('inbound:live', (p: { inboundId: string; phone?: string | null }) => { stopRing(); setInbound(null); setInboundLive({ id: p.inboundId, phone: p.phone ?? 'callback' }); sys('On the line — incoming callback'); });
+    socket.on('inbound:ended', () => { stopRing(); setInbound(null); setInboundLive(null); sys('Callback call ended'); refresh(); });
     socket.on('call:ended', (p: { callId: number; duration: number | null; cause?: string }) => {
       // The red button and the hangup webhook both report this call: one row, one refresh.
       const id = 'end' + p.callId;
@@ -260,8 +290,8 @@ export function useDialer(me: Me) {
       setLastCall((lc) => lc && !lc.outcome ? { ...lc, outcome: stopped ? 'cancelled' : 'no_answer' } : lc);
       refresh();
     });
-    return () => { socket.disconnect(); };
-  }, [push, sys, tapePush, refresh, sync]);
+    return () => { socket.disconnect(); stopRing(); };
+  }, [push, sys, tapePush, refresh, sync, startRing, stopRing]);
 
   // Plan s8 detail 3: the softphone socket dying is a dropped rep leg. Say so, never fail silently.
   useEffect(() => {
@@ -274,6 +304,8 @@ export function useDialer(me: Me) {
     const t = setInterval(refresh, 60_000);
     return () => clearInterval(t);
   }, [phase, refresh]);
+
+  useEffect(() => stopRing, [stopRing]); // leaving the workspace must not leave a ring behind
 
   const runCmd = useCallback(async <T,>(what: string, fn: () => Promise<T>): Promise<T | undefined> => {
     setBusy(true); setErr(null);
@@ -308,7 +340,7 @@ export function useDialer(me: Me) {
     disconnect: () => runCmd('disconnect audio', async () => { softphone.disconnect(); await post('/api/session/disconnect'); }),
     // Inbound (revert) calls waiting on hold: pick up, or send the caller to the callback queue.
     acceptInbound: () => { const i = inboundRef.current; if (i) void post('/api/session/inbound/' + i.id + '/accept').catch((e) => setErr((e as Error).message)); },
-    rejectInbound: () => { const i = inboundRef.current; if (i) { setInbound(null); void post('/api/session/inbound/' + i.id + '/reject').catch((e) => setErr((e as Error).message)); } },
+    rejectInbound: () => { const i = inboundRef.current; if (i) { stopRing(); setInbound(null); void post('/api/session/inbound/' + i.id + '/reject').catch((e) => setErr((e as Error).message)); } },
     endInbound: () => { const i = inboundLiveRef.current; if (i) { setInboundLive(null); void post('/api/session/inbound/' + i.id + '/end').catch((e) => setErr((e as Error).message)); } },
     /** legs 1 = Auto dial (one lead), 2 = Burst dial (first to answer wins). 'drained' = nobody is due, which is a
      *  state to explain, not an error to show in red. undefined = the server refused for a real reason (shown in err). */
