@@ -1,4 +1,4 @@
-// Provider spend uses the existing ledger table to preserve historical billing.
+// Plivo account balance uses the existing ledger table to preserve historical billing.
 import { q } from '../db/pool.js';
 import { pokeAdmins } from '../io.js';
 import { plivoRequest, voiceCall } from '../plivo.js';
@@ -10,7 +10,7 @@ export async function onCallCost(p, state, occurredAt) {
   let total = Number(p.total_cost);
   if (!Number.isFinite(total)) total = 0;                                   // status 'error' may carry null
   const parts = Array.isArray(p.cost_parts) ? p.cost_parts : [];
-  const currency = parts.find((x) => x?.currency)?.currency ?? 'INR';
+  const currency = parts.find((x) => x?.currency)?.currency ?? 'USD';
   await q(
     `INSERT INTO telnyx_costs (call_control_id, call_leg_id, call_session_id, kind, user_id, call_id,
                                occurred_at, total_cost, currency, billed_secs, status, parts)
@@ -26,6 +26,11 @@ export async function onCallCost(p, state, occurredAt) {
   pokeAdmins('cost');
 }
 
+// Plivo's API and CDR amounts are USD; the Indian Console converts at a fixed rate (~80) for
+// display. Match it: set EXCHANGE_RATE_INR to Plivo's rate; 80 is the sensible default.
+export const rate = () => Number(process.env.EXCHANGE_RATE_INR) || 80;
+export const toInr = async (n) => (Number.isFinite(n) ? Math.round(n * rate() * 100) / 100 : n);
+
 // CDRs are fetched through a durable inbox job; Plivo may publish them after hangup.
 export async function refreshCallCost(id) {
   const call = await voiceCall(id);
@@ -34,7 +39,7 @@ export async function refreshCallCost(id) {
   if (cdr.total_amount == null || !Number.isFinite(Number(cdr.total_amount))) throw new Error('Plivo billing is not ready yet');
   await onCallCost({ call_control_id: id, call_leg_id: call.call_uuid, total_cost: cdr.total_amount,
     billed_duration_secs: Number(cdr.bill_duration ?? cdr.billed_duration ?? cdr.call_duration ?? 0), status: 'success',
-    cost_parts: [{ call_part: 'voice', cost: cdr.total_amount, currency: 'INR', rate: cdr.total_rate ?? null }],
+    cost_parts: [{ call_part: 'voice', cost: cdr.total_amount, currency: 'USD', rate: cdr.total_rate ?? null }],
   }, call.state, call.ended_at ?? new Date().toISOString());
 }
 
@@ -42,7 +47,7 @@ let cached = { at: 0, value: null };
 export async function balance() {
   if (cached.value && Date.now() - cached.at < 60_000) return cached.value;
   const data = await plivoRequest('');
-  const amount = data.cash_credits == null ? null : Number(data.cash_credits);
+  const amount = data.cash_credits == null ? null : await toInr(Number(data.cash_credits));
   cached = { at: Date.now(), value: {
     balance: amount, pending: null, creditLimit: null, availableCredit: amount,
     currency: 'INR', asOf: new Date().toISOString(),

@@ -9,7 +9,7 @@ import * as m from '../lib/metrics.js';
 import { readiness, listFromNumbers } from '../lib/queue.js';
 import { status as hubspotStatus } from '../lib/hubspot.js';
 import { hubspotPanel } from './leads.js';
-import { balance } from '../lib/costs.js';
+import { balance, rate } from '../lib/costs.js';
 import { getSettings, setSetting, DEFAULTS } from '../lib/settings.js';
 import { cancelOpenLegs } from '../lib/burst.js';
 import { hangup } from '../plivo.js';
@@ -104,7 +104,12 @@ router.get('/wallet', async (_req, res) => {
     balance().catch((e) => ({ error: e.message })),
     m.wallet(today, today), m.wallet(m.addDays(today, -6), today), m.wallet(m.addDays(today, -29), today), m.walletByDay(m.addDays(today, -29), today),
   ]);
-  res.json({ balance: bal, periods: { today: d1, d7, d30 }, byDay });
+  // Every stored amount is USD (provider truth); the wallet talks rupees, like Plivo's Console.
+  const inr = await rate();
+  const conv = (p) => ({ ...p, currency: 'INR', spend: p.spend * inr, rep_spend: p.rep_spend * inr, lead_spend: p.lead_spend * inr,
+    parts: (p.parts ?? []).map((x) => ({ ...x, cost: x.cost * inr })) });
+  res.json({ balance: bal, periods: { today: conv(d1), d7: conv(d7), d30: conv(d30) },
+    byDay: byDay.map((d) => ({ ...d, spend: d.spend * inr })) });
 });
 
 /** What the dashboard should say about its own plumbing. Read-only. */

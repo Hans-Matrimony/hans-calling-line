@@ -237,5 +237,3 @@ CREATE TABLE IF NOT EXISTS plivo_calls (
 ALTER TABLE users ADD COLUMN IF NOT EXISTS plivo_endpoint_id TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS plivo_sip_username TEXT;
 
--- Plivo's Indian accounts bill in INR; rows stored before the fix carry a hardcoded USD.
-UPDATE telnyx_costs SET currency = 'INR' WHERE currency = 'USD';
