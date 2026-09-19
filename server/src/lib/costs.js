@@ -10,7 +10,7 @@ export async function onCallCost(p, state, occurredAt) {
   let total = Number(p.total_cost);
   if (!Number.isFinite(total)) total = 0;                                   // status 'error' may carry null
   const parts = Array.isArray(p.cost_parts) ? p.cost_parts : [];
-  const currency = parts.find((x) => x?.currency)?.currency ?? 'USD';
+  const currency = parts.find((x) => x?.currency)?.currency ?? 'INR';
   await q(
     `INSERT INTO telnyx_costs (call_control_id, call_leg_id, call_session_id, kind, user_id, call_id,
                                occurred_at, total_cost, currency, billed_secs, status, parts)
@@ -34,7 +34,7 @@ export async function refreshCallCost(id) {
   if (cdr.total_amount == null || !Number.isFinite(Number(cdr.total_amount))) throw new Error('Plivo billing is not ready yet');
   await onCallCost({ call_control_id: id, call_leg_id: call.call_uuid, total_cost: cdr.total_amount,
     billed_duration_secs: Number(cdr.bill_duration ?? cdr.billed_duration ?? cdr.call_duration ?? 0), status: 'success',
-    cost_parts: [{ call_part: 'voice', cost: cdr.total_amount, currency: 'USD', rate: cdr.total_rate ?? null }],
+    cost_parts: [{ call_part: 'voice', cost: cdr.total_amount, currency: 'INR', rate: cdr.total_rate ?? null }],
   }, call.state, call.ended_at ?? new Date().toISOString());
 }
 
@@ -45,7 +45,7 @@ export async function balance() {
   const amount = data.cash_credits == null ? null : Number(data.cash_credits);
   cached = { at: Date.now(), value: {
     balance: amount, pending: null, creditLimit: null, availableCredit: amount,
-    currency: 'USD', asOf: new Date().toISOString(),
+    currency: 'INR', asOf: new Date().toISOString(),
   } };
   return cached.value;
 }

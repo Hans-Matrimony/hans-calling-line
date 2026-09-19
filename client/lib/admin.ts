@@ -117,8 +117,8 @@ export type AdminUser = {
 // --- formatters ---------------------------------------------------------------------------------
 export const pct = (a: number, b: number) => (b ? (100 * a) / b : 0);
 export const fpct = (v: number, d = 1) => v.toFixed(d) + '%';
-export const money = (n: number | null | undefined, ccy = 'USD') =>
-  n == null ? '—' : new Intl.NumberFormat('en-US', { style: 'currency', currency: ccy, minimumFractionDigits: 2, maximumFractionDigits: n < 1 ? 4 : 2 }).format(n);
+export const money = (n: number | null | undefined, ccy = 'INR') =>
+  n == null ? '—' : new Intl.NumberFormat('en-IN', { style: 'currency', currency: ccy, minimumFractionDigits: 2, maximumFractionDigits: n < 1 ? 4 : 2 }).format(n);
 export const secs = (s: number | null | undefined) => {
   if (s == null) return '—';
   const n = Math.round(s); const m = Math.floor(n / 60);

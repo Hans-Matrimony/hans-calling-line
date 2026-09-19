@@ -7,7 +7,7 @@ import Columns, { scale, type Band } from './Columns';
 import { Refresh } from '../icons';
 
 function Card({ title, p }: { title: string; p: WalletPeriod }) {
-  const ccy = p.currency ?? 'USD';
+  const ccy = p.currency ?? 'INR';
   const per = (n: number) => (n ? money(p.spend / n, ccy) : '—');
   return (
     <div className="card">
