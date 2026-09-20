@@ -237,3 +237,12 @@ CREATE TABLE IF NOT EXISTS plivo_calls (
 ALTER TABLE users ADD COLUMN IF NOT EXISTS plivo_endpoint_id TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS plivo_sip_username TEXT;
 
+
+-- Manual CRM exports: stable identity per rep; replay does not reset a lead.
+CREATE TABLE IF NOT EXISTS crm_queue_links (
+ rep_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ external_id TEXT NOT NULL,
+ lead_id INT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ PRIMARY KEY (rep_id, external_id)
+);

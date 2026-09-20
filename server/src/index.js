@@ -9,6 +9,7 @@ import { Server } from 'socket.io';
 import { setIo } from './io.js';
 import { router as auth, userIdFromCookieHeader } from './auth.js';
 import { router as leads } from './routes/leads.js';
+import { router as crm } from './routes/crm.js';
 import { router as session } from './routes/session.js';
 import { router as webhooks, startWebhookWorker } from './routes/webhooks.js';
 import { startCallSyncWorker } from './lib/hubspotCalls.js';
@@ -37,6 +38,7 @@ app.use(express.json());
 app.use(cookieParser());
 app.use('/api', auth);
 app.use('/api/leads', leads);
+app.use('/api/integrations/crm', crm);
 app.use('/api/session', session);
 app.use('/api/admin', admin);
 // Production: serve the Next.js static export (client/out) from here so browser and API share

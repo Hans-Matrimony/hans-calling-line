@@ -117,3 +117,6 @@ npm start
 ```
 
 Set `PUBLIC_URL` to the deployment HTTPS URL and configure the same Plivo Voice Application there. Set `NODE_ENV=production` in deployment to enable secure cookies.
+
+## CRM requested leads
+Manual export setup and behavior: [CRM queue integration](docs/CRM-QUEUE.md).

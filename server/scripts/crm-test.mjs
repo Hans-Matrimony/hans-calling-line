@@ -1,0 +1,37 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import express from 'express';
+if (process.env.HANS_TEST_DATABASE !== 'isolated') throw new Error('Use test-local.mjs');
+process.env.CRM_QUEUE_TOKEN = 'isolated-crm-token-12345678901234567890';
+const { q, pool } = await import('../src/db/pool.js');
+await q(readFileSync(new URL('../sql/schema.sql', import.meta.url), 'utf8'));
+const { router } = await import('../src/routes/crm.js');
+const app=express(); app.use(express.json()); app.use(router);
+app.use((error, req, res, next) => { console.error(error); res.status(500).json({error: error.message}); });
+const server=app.listen(0,'127.0.0.1');
+await new Promise(resolve=>server.once('listening',resolve));
+const base='http://127.0.0.1:'+server.address().port;
+const post=(body,token=process.env.CRM_QUEUE_TOKEN)=>fetch(base+'/queue',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify(body)});
+const body={repEmail:'rep@example.test',leads:[{externalId:'hanscrm:incomplete:10',name:'Test lead',phone:'8394833898'}]};
+try {
+ await q("INSERT INTO users(email,password_hash,role,active) VALUES ('rep@example.test','unused','rep',true), ('admin@example.test','unused','admin',true), ('disabled@example.test','unused','rep',false)");
+ assert.equal((await post(body,'wrong')).status,401);
+ for (const repEmail of ['admin@example.test','disabled@example.test','missing@example.test']) assert.equal((await post({...body,repEmail})).status,422);
+ console.log('PASS authentication and active-rep validation');
+ let response=await post(body); assert.equal(response.status,200); assert.deepEqual(await response.json(),{queued:1,existing:0});
+ const first=(await q('SELECT * FROM leads')).rows[0];
+ assert.equal(first.phone,'+918394833898'); assert.equal(first.timezone,'Asia/Kolkata'); assert.equal(first.status,'queued');
+ await q("UPDATE leads SET status='later',attempt_count=2 WHERE id=$1",[first.id]);
+ response=await post(body); assert.deepEqual(await response.json(),{queued:0,existing:1});
+ const preserved=(await q('SELECT * FROM leads')).rows[0]; assert.equal(preserved.status,'later'); assert.equal(preserved.attempt_count,2);
+ response=await post({...body,leads:[{...body.leads[0],externalId:'hanscrm:lead:20'}]}); assert.deepEqual(await response.json(),{queued:0,existing:1});
+ console.log('PASS normalization, replay and same-phone deduplication preserve existing outcomes');
+ const next={...body,leads:[{...body.leads[0],externalId:'hanscrm:incomplete:11',phone:'+919876543210'}]};
+ const results=await Promise.all([post(next),post(next)]); const values=await Promise.all(results.map(r=>r.json()));
+ assert.equal(values.reduce((n,v)=>n+v.queued,0),1); assert.equal(values.reduce((n,v)=>n+v.existing,0),1);
+ const invalid={...body,leads:[{...next.leads[0],externalId:'new',phone:'+919876543211'},{externalId:'bad',phone:'123'}]};
+ assert.equal((await post(invalid)).status,422);
+ assert.equal(Number((await q('SELECT count(*) FROM leads')).rows[0].count),2);
+ assert.equal(Number((await q('SELECT count(*) FROM calls')).rows[0].count),0);
+ console.log('PASS concurrent retries, atomic validation and queue-only behavior (no calls)');
+} finally { server.closeAllConnections(); await new Promise(resolve=>server.close(resolve)); await pool.end(); }

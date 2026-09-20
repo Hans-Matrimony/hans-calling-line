@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 let exitCode = 0;
-for (const file of process.argv.slice(2).length ? process.argv.slice(2) : ['cascade-test.mjs', 'hubspot-test.mjs', 'admin-test.mjs', 'reliability-test.mjs', 'plivo-test.mjs']) {
+for (const file of process.argv.slice(2).length ? process.argv.slice(2) : ['cascade-test.mjs', 'hubspot-test.mjs', 'admin-test.mjs', 'reliability-test.mjs', 'plivo-test.mjs', 'crm-test.mjs']) {
   const db = await PGlite.create();
   const server = new PGLiteSocketServer({ db, host: '127.0.0.1', port: 0, maxConnections: 25 });
   await server.start();
