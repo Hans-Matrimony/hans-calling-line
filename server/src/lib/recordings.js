@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { q, transaction } from '../db/pool.js';
 import { queueCallSync } from './hubspotJobs.js';
 import { pokeAdmins } from '../io.js';
-import { plivoRequest, voiceCall, authHeader, startRecording, encodeState } from '../plivo.js';
+import { plivoRequest, voiceCall, startRecording, encodeState } from '../plivo.js';
 import { RECORD_CALLS, RECORD_BEEP } from '../config.js';
 
 /** Start recording the lead leg right after the bridge. `state` is the leg's existing client_state;
@@ -76,20 +76,8 @@ export async function recordingUrl(call) {
 
 // Plivo recording downloads can require HTTP Basic authentication. Never send account
 // credentials to a third-party recording host or forward them across redirects.
-export async function fetchRecording(url, headers = {}) {
-  const target = new URL(url);
-  if (target.protocol !== 'https:') throw new Error('Recording URL must use HTTPS');
-  const trusted = target.hostname === 'plivo.com' || target.hostname.endsWith('.plivo.com');
-  let response = await fetch(url, { headers: { ...headers, ...(trusted ? { Authorization: authHeader() } : {}) }, redirect: 'manual', signal: AbortSignal.timeout(20000) });
-  for (let attempt = 0; response.status >= 300 && response.status < 400 && attempt < 3; attempt++) {
-    const location = response.headers.get('location');
-    if (!location) break;
-    url = new URL(location, url).href;
-    if (new URL(url).protocol !== 'https:') throw new Error('Recording redirect must use HTTPS');
-    response = await fetch(url, { headers, redirect: 'manual', signal: AbortSignal.timeout(20000) });
-  }
-  return response;
-}
+export { fetchRecording } from '../recordingTransport.js';
+import { fetchRecording } from '../recordingTransport.js';
 export async function recordingBytes(call) {
   const url = await recordingUrl(call);
   if (!url) return null;

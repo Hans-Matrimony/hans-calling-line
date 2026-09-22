@@ -119,4 +119,4 @@ npm start
 Set `PUBLIC_URL` to the deployment HTTPS URL and configure the same Plivo Voice Application there. Set `NODE_ENV=production` in deployment to enable secure cookies.
 
 ## CRM requested leads
-Manual export setup and behavior: [CRM queue integration](docs/CRM-QUEUE.md).
+Native per-lead CRM calling, shared MySQL storage, CRM TSE login, and deployment steps: [CRM calling integration](docs/crm-calling.md). The old select-leads / rep-email export panel is retired. Set `CALLING_STORAGE=crm_mysql` for this mode; the rest of this README describes the preserved PostgreSQL mode.

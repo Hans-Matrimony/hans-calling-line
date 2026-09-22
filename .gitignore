@@ -9,3 +9,6 @@ codex-session-*.md
 .env.*
 !.env.example
 .local/
+
+/client/public/calling/plivo.js
+/client/public/calling/plivobrowsersdk.js.LICENSE.txt

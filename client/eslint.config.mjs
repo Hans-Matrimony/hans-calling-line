@@ -14,6 +14,7 @@ const eslintConfig = [
   {
     ignores: [
       "node_modules/**",
+      "public/calling/plivo.js",
       ".next/**",
       ".ui-test/**",
       "out/**",

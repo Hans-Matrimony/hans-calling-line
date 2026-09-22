@@ -1,3 +1,5 @@
+> Superseded by [native CRM calling](crm-calling.md). The Laravel queue panel and routes described below have been removed. This document records the legacy PostgreSQL integration only.
+
 # Manual CRM queue export
 
 CRM requested-lead pages now have a collapsible **Send requested leads to Hans Dialer** panel. Load the pending leads, select them, enter an existing active dialer rep email and press Send selected to Dialer. A missing or disabled rep is rejected; no account is created. Rep users continue to connect audio and dial in the existing Hans dashboard.
