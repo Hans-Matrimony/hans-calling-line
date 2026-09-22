@@ -41,7 +41,7 @@ router.post('/webrtc-token', async (req, res) => {
   res.json(result);
 });
 
-// Connect me (plan s8): ring the rep once; the leg stays open all session.
+// Connect explicitly; keep audio between calls, with a server-side idle cutoff.
 // mode 'phone' rings his handset, 'browser' rings the WebRTC softphone (which auto-answers).
 router.post('/connect', async (req, res) => {
   const mode = req.body?.mode === 'browser' ? 'browser' : 'phone';
@@ -62,14 +62,15 @@ router.post('/connect', async (req, res) => {
   const from = await pickFromNumber('india');
   if (!from) return res.status(400).json({ error: 'no caller ID configured (FROM_NUMBER_* in .env)' });
   const ccid = await dialRep({ to: dest, from, userId: req.userId });
-  await q('UPDATE users SET telnyx_session_call_id = $2 WHERE id = $1', [req.userId, ccid]);
+  await q('UPDATE users SET telnyx_session_call_id = $2, audio_activity_at = now() WHERE id = $1', [req.userId, ccid]);
   emitToUser(req.userId, 'rep:ringing', { mode });
-  res.json({ ok: true, mode });
+  res.json({ ok: true, mode, callId: ccid });
 });
 
 router.post('/disconnect', async (req, res) => {
   const { rows: [u] } = await q('SELECT telnyx_session_call_id FROM users WHERE id = $1', [req.userId]);
-  if (u.telnyx_session_call_id) await hangup(u.telnyx_session_call_id);
+  if (u.telnyx_session_call_id && (!req.body?.callId || req.body.callId === u.telnyx_session_call_id))
+    await hangup(u.telnyx_session_call_id);
   res.json({ ok: true });
 });
 

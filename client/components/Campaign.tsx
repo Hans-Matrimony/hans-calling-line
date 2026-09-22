@@ -33,7 +33,7 @@ export default function Campaign({ d, mode, onQueue }: { d: D; mode: View; onQue
   const ready = d.stats?.ready ?? 0;
   const available = d.fromNumbers.some((n) => n.available);
   const otherRun = d.run && d.run.mode !== mode;
-  const why = !d.recovered ? 'Restoring your session…' : d.rep !== 'connected' ? 'Connect audio in the top bar to start calling.'
+  const why = !d.recovered ? 'Restoring your session…'
     : !d.fromNumbers.length ? 'No caller IDs configured. Ask your admin to add one.' : !available ? 'All caller IDs have reached their daily limit.'
     : otherRun ? `Stop your ${d.run!.mode === 'auto' ? 'auto' : 'burst'} dial run before changing modes.`
     : !d.upNext || !d.stats ? 'Loading your queue…' : !ready ? 'No leads are eligible right now. Check Up next for their opening times.' : '';
@@ -74,7 +74,7 @@ export default function Campaign({ d, mode, onQueue }: { d: D; mode: View; onQue
         {!active && <div className="cw-next-action">
           {isManual ? saved && <button className="btn btn-blue" onClick={d.dismissSaved}>Back to dialer<ArrowRight size={16} /></button> : <>
             <div>{saved && first && <><span className="cw-overline">Up next</span><b>{nameOf(first)}</b></>}{why && <p>{why}</p>}{!why && !saved && <small>{ready} ready · {mode === 'burst' ? 'Up to 2 leads per dial' : '1 lead per dial'}</small>}</div>
-            {inspecting ? <button className="btn" onClick={() => setPreviewId(null)}>Review next lead<ArrowRight size={16} /></button> : <button className="btn btn-blue" onClick={start} disabled={!!why || d.busy || starting}>{starting ? 'Starting…' : saved || d.run ? mode === 'burst' ? 'Next 2 leads' : 'Next lead' : 'Start calling'}<ArrowRight size={16} /></button>}
+            {inspecting ? <button className="btn" onClick={() => setPreviewId(null)}>Review next lead<ArrowRight size={16} /></button> : <button className="btn btn-blue" onClick={start} disabled={!!why || d.busy || starting}>{d.audioConnecting ? 'Connecting audio…' : starting ? 'Starting…' : saved || d.run ? mode === 'burst' ? 'Next 2 leads' : 'Next lead' : 'Start calling'}<ArrowRight size={16} /></button>}
           </>}
         </div>}
         <CallerCapacity d={d} />

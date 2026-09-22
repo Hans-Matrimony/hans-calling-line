@@ -62,7 +62,7 @@ async function main() {
       if (req.method() === 'GET') {
         if (state.role === 'admin' && F.admin[p]) return reply(F.admin[p]);
         if (p === '/api/me') return reply({ ...F.me, role: state.role });
-        if (p === '/api/session/state') return reply({ repUp: state.audio, phase: state.phase, legs: state.phase === 'idle' ? [] : [{ ...F.legs[0], card: liveCard(), status: state.phase === 'ringing' ? 'ringing' : 'answered' }], card: ['live', 'ended'].includes(state.phase) ? liveCard() : null, answeredAt: F.ago(2), duration: state.phase === 'ended' ? 151 : null });
+        if (p === '/api/session/state') return reply({ telnyx_session_call_id: state.audioCallId || (state.audio ? 'existing-audio' : null), repUp: state.audio, phase: state.phase, legs: state.phase === 'idle' ? [] : [{ ...F.legs[0], card: liveCard(), status: state.phase === 'ringing' ? 'ringing' : 'answered' }], card: ['live', 'ended'].includes(state.phase) ? liveCard() : null, answeredAt: F.ago(2), duration: state.phase === 'ended' ? 151 : null });
         if (p === '/api/leads/stats') return reply({ ...F.stats, ready: state.empty ? 0 : 6, hubspot: state.syncError ? { ...F.stats.hubspot, ok: false, error: 'HubSpot scope unavailable' } : F.stats.hubspot });
         if (p === '/api/session/from-numbers') return reply(state.capped ? [{ ...F.from[0], usedToday: 100, available: false }] : F.from);
         if (p === '/api/leads/next') return state.queueError ? reply({ error: 'Queue unavailable' }, 503) : reply(state.empty ? [] : state.leads);
@@ -72,8 +72,14 @@ async function main() {
       } else {
         const body = req.postDataJSON?.() || {};
         writes.push({ path: p, body });
+        if (p === '/api/logout') return reply({});
         if (p === '/api/session/webrtc-token') return reply({ token: 'fixture-only' });
-        if (p === '/api/session/connect') return reply({});
+        if (p === '/api/session/connect') {
+          state.audioCallId = 'fixture-audio';
+          if (!state.holdAudio) { state.audio = true; await page.evaluate(() => window.testAudio('in_call')); }
+          return reply({ callId: state.audioCallId });
+        }
+        if (p === '/api/session/disconnect') { state.audio = false; state.audioCallId = null; return reply({}); }
         if (p === '/api/session/disposition') {
           await new Promise((resolve) => setTimeout(resolve, 1500));
           if (state.failSave) return reply({ error: 'Temporary save failure' }, 503);
@@ -103,7 +109,7 @@ async function main() {
     let caseId = 0;
     const load = async (phase = 'live', tab = 'auto', options = {}) => {
       state = { phase, role: 'rep', audio: true, card: structuredClone(F.card), leads: structuredClone(F.leads), ...options }; writes = [];
-      await page.goto(url + '?case=' + (++caseId) + '&tab=' + tab);
+      await page.goto(url + '?case=' + (++caseId) + '&tab=' + tab + '&audio=' + (state.audio ? 'on' : 'off'));
       await page.locator(state.role === 'admin' ? '.ad-screen' : '.cw-conversation').waitFor();
       if (phase === 'live') await page.getByRole('button', { name: 'Hang up', exact: true }).waitFor();
       await page.evaluate(() => document.fonts.ready);
@@ -111,6 +117,79 @@ async function main() {
     const screenshot = (name) => page.screenshot({ path: path.join(shots, name + '.png'), fullPage: true });
     const dispositionWrites = () => writes.filter((w) => w.path.endsWith('/disposition'));
     const dialWrites = () => writes.filter((w) => w.path.endsWith('/burst') || w.path.endsWith('/dial'));
+
+    await load('idle', 'auto', { audio: false });
+    await page.waitForTimeout(4500);
+    check('Opening an idle dashboard does not request a token or create a paid audio connection', !writes.some(w => /webrtc-token|session\/connect/.test(w.path)));
+    await page.getByRole('button', { name: 'Connect', exact: true }).click();
+    await page.waitForTimeout(4500);
+    check('Explicit Connect requests audio once', writes.filter(w => w.path === '/api/session/connect').length === 1);
+    // Backend readiness alone must not start a call before browser audio is answered.
+    await load('idle', 'auto', { audio: false, holdAudio: true });
+    const audioRequest = page.waitForResponse(r => r.url().endsWith('/api/session/connect'));
+    await page.getByRole('button', { name: 'Start calling', exact: true }).click();
+    await audioRequest;
+    check('Start calling connects audio before dialing a customer', dialWrites().length === 0);
+    state.audio = true;
+    await page.waitForTimeout(800);
+    check('Server readiness alone cannot dial without browser audio', dialWrites().length === 0);
+    await page.evaluate(() => window.testAudio('in_call'));
+    await page.locator('.cw-ringing').waitFor();
+    check('Confirmed audio starts exactly one queue call', dialWrites().length === 1 && dialWrites()[0].body.legs === 1);
+
+    // Browser readiness alone is also insufficient; burst waits for its conference.
+    await load('idle', 'burst', { audio: false, holdAudio: true });
+    const burstAudioRequest = page.waitForResponse(r => r.url().endsWith('/api/session/connect'));
+    await page.getByRole('button', { name: 'Start calling', exact: true }).click();
+    await burstAudioRequest;
+    await page.evaluate(() => window.testAudio('in_call'));
+    await page.waitForTimeout(800);
+    check('Browser readiness alone cannot dial before the server conference', dialWrites().length === 0);
+    state.audio = true;
+    await page.locator('.cw-ringing').waitFor();
+    check('Burst preserves two-lead dialing after audio is ready', dialWrites().length === 1 && dialWrites()[0].body.legs === 2);
+
+    await load('idle', 'dialer', { audio: false });
+    await page.getByRole('textbox', { name: 'Number to call', exact: true }).fill('+442079460001');
+    await page.getByRole('button', { name: 'Call', exact: true }).evaluate(b => { b.click(); b.click(); });
+    await page.locator('.cw-ringing').waitFor();
+    check('Double-clicking manual Call creates one audio connection and one customer call', writes.filter(w => w.path === '/api/session/connect').length === 1 && dialWrites().length === 1 && dialWrites()[0].body.to === '+442079460001');
+
+    await load('idle', 'auto', { audio: false });
+    await page.evaluate(() => { window.testAudioFailure = true; });
+    await page.getByRole('button', { name: 'Start calling', exact: true }).click();
+    await page.getByRole('alert').filter({ hasText: 'Microphone blocked' }).waitFor();
+    check('Microphone failure prevents both audio dialing and customer dialing', dialWrites().length === 0 && !writes.some(w => w.path === '/api/session/connect'));
+
+    await load('idle', 'auto', { audio: false, holdAudio: true });
+    await page.evaluate(() => {
+      const original = window.setTimeout;
+      window.setTimeout = (fn, delay, ...args) => original(fn, delay === 60000 ? 6500 : delay, ...args);
+    });
+    await page.getByRole('button', { name: 'Start calling', exact: true }).click();
+    await page.getByRole('alert').filter({ hasText: 'Audio setup timed out' }).waitFor();
+    check('Audio timeout cancels only its own audio attempt and never dials a customer', dialWrites().length === 0 && writes.some(w => w.path === '/api/session/disconnect' && w.body.callId === 'fixture-audio'));
+
+    await load('idle', 'auto');
+    await page.getByRole('button', { name: 'Start calling', exact: true }).click();
+    await page.locator('.cw-ringing').waitFor();
+    check('Already-connected audio is reused without a token or reconnect request', dialWrites().length === 1 && !writes.some(w => /webrtc-token|session\/connect/.test(w.path)));
+
+    await load('idle', 'auto', { audio: false, holdAudio: true });
+    const navigationAudioRequest = page.waitForResponse(r => r.url().endsWith('/api/session/connect'));
+    await page.getByRole('button', { name: 'Start calling', exact: true }).click();
+    await navigationAudioRequest;
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+    state.audio = true;
+    await page.waitForTimeout(1000);
+    check('Leaving the dialer during audio setup cannot dial a customer later', dialWrites().length === 0);
+
+    await load('ended');
+    await page.locator('#call-note').fill('Keep this outcome draft after idle disconnect.');
+    await emit('rep:disconnected', { cause: 'idle_timeout' });
+    await page.getByText('Audio disconnected after 2 idle minutes to stop call charges. Audio will reconnect when you start your next call.', { exact: true }).first().waitFor();
+    check('Idle disconnect preserves the outcome form and draft note', await page.locator('#call-note').inputValue() === 'Keep this outcome draft after idle disconnect.' && await page.getByRole('button', { name: 'Save outcome', exact: true }).isVisible());
+    check('Idle disconnect offers manual reconnect', await page.getByRole('button', { name: 'Connect', exact: true }).isEnabled());
 
     await load();
     await page.locator('#call-note').fill('Interested in a demo for their team of 12. Discuss HubSpot follow-ups and WhatsApp handoffs.');

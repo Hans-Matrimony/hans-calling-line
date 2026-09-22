@@ -36,6 +36,8 @@ export async function reserveBurst(userId) {
     const { rows } = await q(`SELECT 1 FROM calls c JOIN bursts b ON b.id = c.burst_id
       WHERE b.user_id = $1 AND c.disposition IS NULL LIMIT 1`, [userId]);
     if (activeBurst.has(userId) || rows.length) return 'busy';
+    // Share the user row lock with the idle worker: a newly reserved dial gets a fresh grace period.
+    await q('UPDATE users SET audio_activity_at = now() WHERE id = $1', [userId]);
     activeBurst.set(userId, 0);
     return null;
   });

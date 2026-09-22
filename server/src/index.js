@@ -17,6 +17,7 @@ import { router as admin } from './routes/admin.js';
 import { router as rec } from './routes/rec.js';
 import { q } from './db/pool.js';
 import { startPolling } from './lib/hubspot.js';
+import { startAudioIdleWorker } from './lib/audioIdle.js';
 
 const app = express();
 const origin = process.env.CLIENT_ORIGIN ?? 'http://localhost:3000';
@@ -69,4 +70,5 @@ server.listen(port, () => {
   startPolling(); // HubSpot inlet; a no-op until HUBSPOT_TOKEN is set
   startWebhookWorker();
   startCallSyncWorker();
+  startAudioIdleWorker();
 });

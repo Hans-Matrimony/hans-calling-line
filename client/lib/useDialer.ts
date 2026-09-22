@@ -42,13 +42,22 @@ export type Run = { mode: Mode; since: Date; endAfter: boolean };
 export type LastRun = { mode: Mode; since: Date; until: Date };
 export type SavedCall = { card: Card; label: string; note: string; status: string; nextCallAt: string | null; duration: number | null };
 export type HeldBack = { name: string | null; phone: string; at: string };
-type SessionState = { repUp: boolean; burstId: number | null; phase: Phase; legs: Leg[]; card: Card | null; answeredAt: string | null; duration: number | null };
+type SessionState = { telnyx_session_call_id: string | null; repUp: boolean; burstId: number | null; phase: Phase; legs: Leg[]; card: Card | null; answeredAt: string | null; duration: number | null };
 type BurstLeg = { leadId: number; name: string | null; phone: string; disposition: string | null };
 export type ImportResult = { inserted: number; updated: number; withAlternates: number; skipped: { line: number; reason: string }[]; warnings: { line: number; reason: string }[] };
 type ActivityRow = { callId: number; name: string | null; phone: string; country: string | null; from: string | null; startedAt: string; answered: boolean; duration: number | null; disposition: string | null; subOutcome: string | null; notes: string | null; burstWon: boolean };
 
 const label = (name: string | null, phone: string) => name || phone;
 const FEED_MAX = 200;
+// Abort setup on timeout or navigation, including while microphone permission is pending.
+function abortable<T>(task: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+    task.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+    if (signal.aborted) abort();
+  });
+}
 let seq = 0;
 const OUTCOME_TEXT: Record<Outcome, string> = { connected: 'Connected', no_answer: 'No answer', later: 'Call later', invalid: 'Wrong number' };
 
@@ -93,6 +102,12 @@ const rowToEvent = (r: ActivityRow): ActivityEvent => ({ ...rowEvent(r), phone: 
 export function useDialer(me: Me) {
   const softphone = useSoftphone();
   const [recovered, setRecovered] = useState(false);
+  const softphoneRef = useRef(softphone); softphoneRef.current = softphone;
+  const audioAbort = useRef<AbortController | null>(null);
+  const commandBusy = useRef(false);
+  const [audioConnecting, setAudioConnecting] = useState(false);
+  useEffect(() => () => audioAbort.current?.abort(new Error('Audio setup cancelled.')), []);
+  const [audioNotice, setAudioNotice] = useState('');
   const [rep, setRep] = useState<Rep>('disconnected');
   const [phase, setPhase] = useState<Phase>('idle');
   const [legs, setLegs] = useState<Leg[]>([]);
@@ -229,7 +244,12 @@ export function useDialer(me: Me) {
     // A live/ended card survives a drop so the rep can still save its outcome; only a ringing burst resets.
     socket.on('rep:disconnected', (p: { cause?: string }) => {
       setRep('disconnected'); setPhase((ph) => (ph === 'ringing' ? 'idle' : ph)); setLegs([]);
-      push('error', 'Audio dropped', p?.cause ?? 'unknown cause');
+      if (p?.cause === 'idle_timeout') {
+        const message = 'Audio disconnected after 2 idle minutes to stop call charges. Audio will reconnect when you start your next call.';
+        setAudioNotice(message);
+        setRun((r) => { if (r) setLastRun({ mode: r.mode, since: r.since, until: new Date() }); return null; });
+        sys(message);
+      } else push('error', 'Audio dropped', p?.cause ?? 'unknown cause');
     });
     socket.on('burst:started', (p: { legs: Omit<Leg, 'status'>[]; manual?: boolean; heldBack?: HeldBack[] }) => {
       manualRef.current = !!p.manual;
@@ -308,6 +328,8 @@ export function useDialer(me: Me) {
   useEffect(() => stopRing, [stopRing]); // leaving the workspace must not leave a ring behind
 
   const runCmd = useCallback(async <T,>(what: string, fn: () => Promise<T>): Promise<T | undefined> => {
+    if (commandBusy.current) return undefined;
+    commandBusy.current = true;
     setBusy(true); setErr(null);
     try { return await fn(); }
     catch (e) {
@@ -315,11 +337,65 @@ export function useDialer(me: Me) {
       if (/audio is not connected|audio leg is not connected/i.test(m)) setRep('disconnected'); // server lost the leg (restart): let Connect reappear
       setErr(m); push('error', what + ' failed', m); return undefined;
     }
-    finally { setBusy(false); }
+    finally { commandBusy.current = false; setBusy(false); }
   }, [push]);
 
+  const ensureAudio = async (forDial = false) => {
+    if (!recovered) throw new Error('Wait for your session to finish loading.');
+    const controller = new AbortController();
+    audioAbort.current = controller;
+    const { signal } = controller;
+    const timeout = setTimeout(() => controller.abort(new Error('Audio setup timed out. Check your microphone and connection, then try again.')), 60_000);
+    let callId: string | undefined;
+    let started = false;
+    let preserveAudio = false;
+    const checkSession = (s: SessionState) => {
+      if (s.phase === 'live' || s.phase === 'ringing' || (forDial && s.phase === 'ended') || inboundRef.current || inboundLiveRef.current) {
+        preserveAudio = true;
+        throw new Error('Finish the current call and save its outcome before starting another.');
+      }
+    };
+    try {
+      const current = await api<SessionState>('/api/session/state', { signal });
+      checkSession(current);
+      if (current.repUp && softphoneRef.current.status === 'in_call') return;
+      setAudioNotice(''); setAudioConnecting(true); setRep('ringing');
+      started = true;
+      const { token } = await api<{ token: string }>('/api/session/webrtc-token', { method: 'POST', signal });
+      await abortable(softphoneRef.current.connect(token), signal);
+      // Allow the SIP registration to propagate before the backend rings the browser.
+      await abortable(new Promise(resolve => setTimeout(resolve, 4000)), signal);
+      signal.throwIfAborted();
+      const connected = await api<{ callId: string }>('/api/session/connect', { method: 'POST', body: JSON.stringify({ mode: 'browser' }), signal });
+      callId = connected.callId;
+      if (!callId) throw new Error('Audio setup could not be confirmed. Refresh and try again.');
+      while (true) {
+        signal.throwIfAborted();
+        const state = await api<SessionState>('/api/session/state', { signal });
+        checkSession(state);
+        if (state.telnyx_session_call_id !== callId) throw new Error('Audio connection ended or changed. Please try again.');
+        const audio = softphoneRef.current;
+        if (audio.status === 'error' || audio.status === 'off' || audio.error) throw new Error(audio.error || 'Audio connection failed. Please try again.');
+        // SDK login alone is insufficient: require the browser call and backend conference.
+        if (state.repUp && audio.status === 'in_call') { setRep('connected'); return; }
+        await abortable(new Promise(resolve => setTimeout(resolve, 500)), signal);
+      }
+    } catch (error) {
+      if (started && !preserveAudio && !inboundRef.current && !inboundLiveRef.current) {
+        softphoneRef.current.disconnect(); setRep('disconnected');
+        // Only clean up this attempt; another tab may already have replaced it.
+        if (callId) await post('/api/session/disconnect', { callId }).catch(() => {});
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+      if (audioAbort.current === controller) audioAbort.current = null;
+      setAudioConnecting(false);
+    }
+  };
+
   return {
-    me, rep, recovered, phase, legs, card, answeredAt, duration, endCause, stats, fromNumbers, upNext, queue, feed, feedLoaded, busy, err, loadError, softphone,
+    me, rep, recovered, audioNotice, audioConnecting, phase, legs, card, answeredAt, duration, endCause, stats, fromNumbers, upNext, queue, feed, feedLoaded, busy, err, loadError, softphone,
     inbound, inboundLive,
     retryLoad: () => { refresh(); void sync(); },
     note, setNote, lastCall, lastSaved, dismissSaved: () => setLastSaved(null), prefill, setPrefill, run, lastRun, runTape, lastBurst, heldBack,
@@ -328,14 +404,7 @@ export function useDialer(me: Me) {
     startRun: (mode: Mode) => { if (!runRef.current) { setRunTape([]); setLastBurst(null); setRun({ mode, since: new Date(), endAfter: false }); } },
     stopRun: () => setRun((r) => { if (r) setLastRun({ mode: r.mode, since: r.since, until: new Date() }); return null; }),
     endRunAfterCall: () => setRun((r) => (r ? { ...r, endAfter: true } : r)),
-    connect: () => runCmd('connect audio', async () => {
-      const { token } = await post<{ token: string }>('/api/session/webrtc-token');
-      await softphone.connect(token);
-      // Plivo needs a couple of seconds after onLogin before the SIP registration is routable;
-      // dialing sooner makes the rep leg die with endpoint_not_registered.
-      await new Promise((r) => setTimeout(r, 4000));
-      await post('/api/session/connect', { mode: 'browser' });
-    }),
+    connect: () => runCmd('connect audio', () => ensureAudio()),
     // Browser hangs up first so the SDK never BYEs a leg the server already ended; the server call then just clears state.
     disconnect: () => runCmd('disconnect audio', async () => { softphone.disconnect(); await post('/api/session/disconnect'); }),
     // Inbound (revert) calls waiting on hold: pick up, or send the caller to the callback queue.
@@ -345,13 +414,17 @@ export function useDialer(me: Me) {
     /** legs 1 = Auto dial (one lead), 2 = Burst dial (first to answer wins). 'drained' = nobody is due, which is a
      *  state to explain, not an error to show in red. undefined = the server refused for a real reason (shown in err). */
     startCalling: (legs: 1 | 2): Promise<'started' | 'drained' | undefined> => runCmd('start dialing', async () => {
+      await ensureAudio(true);
       try { await post('/api/session/burst', { legs }); return 'started' as const; }
       catch (e) {
         if (/nobody is due/i.test((e as Error).message)) { sys('Queue drained — nobody is due right now'); refresh(); return 'drained' as const; }
         throw e;
       }
     }),
-    manualDial: (to: string, from: string) => runCmd('call', () => post('/api/session/dial', { to, from })),
+    manualDial: (to: string, from: string) => runCmd('call', async () => {
+      await ensureAudio(true);
+      return post('/api/session/dial', { to, from });
+    }),
     // If the server has nothing to hang up while we show a live card (its burst was cleared), end the call locally
     // so the outcome buttons appear instead of a dead red button.
     hangupLead: () => runCmd('hang up', () => post('/api/session/hangup-lead')).then((r) => {

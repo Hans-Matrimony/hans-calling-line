@@ -93,7 +93,8 @@ await onCallCost(costEvt('rep-1', { total_cost: '0.4000' }), { kind: 'rep', user
 ok('rep session leg: attributed to the rep, no call', await costRow('rep-1'), { kind: 'rep', user_id: rep.id, call_id: null, total_cost: 0.4, status: 'success', parts: 2 });
 await onCallCost(costEvt('nostate', { total_cost: '0.0010' }), null, '2026-09-09T11:00:00Z');
 ok('a leg with no client_state still counts', (await costRow('nostate')).kind, null);
-ok('balance parsed', (await balance()).availableCredit, 12.34);
+ok('balance converted from USD to INR', (await balance()).availableCredit, 987.2);
+ok('balance currency is INR', (await balance()).currency, 'INR');
 
 // --- 2. recording -----------------------------------------------------------------------------
 await startLeadRecording(C1, 'cc-1', { kind: 'lead', userId: rep.id, burstId: 1, leadId: L1 });

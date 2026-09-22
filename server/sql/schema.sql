@@ -246,3 +246,7 @@ CREATE TABLE IF NOT EXISTS crm_queue_links (
  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
  PRIMARY KEY (rep_id, external_id)
 );
+
+-- Bound billable browser audio while idle; persisted state survives restarts and hangup retries.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS audio_activity_at TIMESTAMPTZ;
+ALTER TABLE plivo_calls ADD COLUMN IF NOT EXISTS idle_disconnect_at TIMESTAMPTZ;

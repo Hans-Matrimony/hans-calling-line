@@ -31,15 +31,6 @@ export default function Console({ me, onLogout }: { me: Me; onLogout: () => void
   const [tab, setTab] = useTab();
   const [importMessage, setImportMessage] = useState('');
 
-  // Audio on by default: connect the softphone as soon as the console loads. If the mic is blocked or
-  // the connect fails, useDialer surfaces the error and the "Connect" button stays for a manual retry.
-  const autoConnect = useRef(false);
-  useEffect(() => {
-    if (autoConnect.current || !d.recovered) return;
-    autoConnect.current = true;
-    if (d.phase === 'idle') d.connect();
-  }, [d.recovered]); // eslint-disable-line react-hooks/exhaustive-deps
-
   // A call is never hidden behind a tab: dialing or a live lead brings the dialer forward so the card and outcome
   // are in view - unless the rep is on Auto dial / Burst dial, which show the call themselves.
   useEffect(() => {
@@ -85,8 +76,8 @@ export default function Console({ me, onLogout }: { me: Me; onLogout: () => void
             <span className={'lamp ' + audio.lamp} aria-hidden />
             <span>{audio.text}</span>
             {d.rep === 'disconnected'
-              ? <button className="btn btn-blue" onClick={d.connect} disabled={d.busy}>Connect</button>
-              : <button className="btn btn-ghost" onClick={d.disconnect} disabled={d.busy || d.phase === 'live' || d.phase === 'ringing'} title={d.phase === 'live' || d.phase === 'ringing' ? 'End the call first' : 'Disconnect audio'}>Disconnect</button>}
+              ? <button className="btn btn-blue" onClick={d.connect} disabled={d.busy || !d.recovered}>Connect</button>
+              : <button className="btn btn-ghost" onClick={d.disconnect} disabled={d.busy || d.phase === 'live' || d.phase === 'ringing' || !!d.inbound || !!d.inboundLive} title={d.phase === 'live' || d.phase === 'ringing' ? 'End the call first' : 'Disconnect audio'}>Disconnect</button>}
           </div>
         </header>
         <main id="workspace-main" className="cw-workspace" tabIndex={-1}>
@@ -94,6 +85,7 @@ export default function Console({ me, onLogout }: { me: Me; onLogout: () => void
             <input ref={fileRef} type="file" accept=".csv" hidden onChange={async (e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) { const result = await d.upload(f); if (result) setImportMessage(`Imported ${result.inserted} new · ${result.updated} updated · ${result.skipped.length} skipped · ${result.warnings.length} need a timezone. Details in Activity.`); } }} />
             <button className="btn" onClick={() => { setImportMessage(''); fileRef.current?.click(); }} disabled={d.busy}><Upload size={15} />Import CSV</button>
           </div>
+          <p className="cw-notice" role="status">{d.audioNotice || 'Audio connects automatically when you press Call or Start calling, and disconnects after 2 minutes without a customer call. Incoming callbacks are queued while audio is off.'}</p>
           {importMessage && <p className="cw-notice" role="status">{importMessage}</p>}
           {d.inbound && (
             <div className="cw-active-banner inbound-ring" role="alert">

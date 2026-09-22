@@ -86,6 +86,14 @@ const post = async (path, body, userId = uid) => {
 };
 
 try {
+  await q(`INSERT INTO plivo_calls(id,call_uuid,state) VALUES ('audio-scope','audio-scope-uuid',$1)`, [JSON.stringify({ kind: 'rep', userId: uid })]);
+  await q("UPDATE users SET telnyx_session_call_id='audio-scope' WHERE id=$1", [uid]);
+  check('stale audio cleanup request succeeds harmlessly', (await post('disconnect', { callId: 'previous-audio' })).status, 200);
+  check('stale audio cleanup cannot cancel a replacement session', (await q("SELECT cancelled FROM plivo_calls WHERE id='audio-scope'")).rows[0].cancelled, false);
+  check('matching audio cleanup succeeds', (await post('disconnect', { callId: 'audio-scope' })).status, 200);
+  check('matching audio cleanup cancels only its own session', (await q("SELECT cancelled FROM plivo_calls WHERE id='audio-scope'")).rows[0].cancelled, true);
+  await q('UPDATE users SET telnyx_session_call_id=NULL WHERE id=$1', [uid]);
+
   // Deliberately different call and lead ids reproduce the snapshot column collision.
   await q("SELECT setval(pg_get_serial_sequence('calls', 'id'), 100)");
   const l = await lead(), c = await call(l, { answered_at: new Date(Date.now() - 45000), duration: 40 });

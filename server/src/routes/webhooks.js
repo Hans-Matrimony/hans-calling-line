@@ -57,31 +57,41 @@ router.post('/plivo/inbound', async (req, res) => {
         // Park the caller on hold and ring the rep's screen: they pick up with Answer / Reject.
         // Unanswered for 45 s, the caller becomes a queued callback on the rep's list.
         const id = randomUUID();
-        await q('INSERT INTO plivo_calls(id, call_uuid, state) VALUES ($1, $2, $3)',
-          [id, uuid, JSON.stringify({ kind: 'inbound', userId: rep.id, phone: from })]);
-        emitToUser(rep.id, 'inbound:incoming', { inboundId: id, phone: from });
-        setTimeout(() => {
-          void (async () => {
-            const c = await voiceCall(id);
-            if (!c || c.ended_at || c.cancelled || c.bridge_room) return; // answered or already gone
-            await hangup(id);
-            await transaction(async () => {
-              const lead = await claimManual(rep.id, from);
-              await q(`UPDATE leads SET status = 'queued', next_call_at = now(), attempt_count = 0 WHERE id = $1`, [lead.id]);
-            });
-            emitToUser(rep.id, 'inbound:ended', { phone: from, reason: 'queued' });
-            emitToUser(rep.id, 'queue:changed', {});
-            pokeAdmins('queue');
-            console.log('[inbound] no answer in 45 s — caller queued for user', rep.id);
-          })().catch((e) => console.warn('inbound timeout:', e.message));
-        }, 45_000).unref?.();
-        return res.type('text/xml').send(xml('<Speak>One moment please, connecting you.</Speak>' +
-          '<Conference startConferenceOnEnter="true" endConferenceOnExit="false" maxMembers="1" timeLimit="150" enterSound="" exitSound="" callbackMethod="POST" callbackUrl="' +
-          escape(callbackUrl('conference', id, { stage: 'hold' })) + '">hold-' + escape(id) + '</Conference>'));
+        // The idle worker takes this same row lock before stopping audio. Either the
+        // incoming call reserves the room first, or it falls through to the callback queue.
+        const reserved = await transaction(async () => {
+          const { rows: [current] } = await q('SELECT rep_connected, telnyx_session_call_id FROM users WHERE id = $1 FOR UPDATE', [rep.id]);
+          if (!current?.rep_connected || current.telnyx_session_call_id !== rep.telnyx_session_call_id) return false;
+          await q('INSERT INTO plivo_calls(id, call_uuid, state) VALUES ($1, $2, $3)',
+            [id, uuid, JSON.stringify({ kind: 'inbound', userId: rep.id, phone: from })]);
+          await q('UPDATE users SET audio_activity_at = now() WHERE id = $1', [rep.id]);
+          return true;
+        });
+        if (reserved) {
+          emitToUser(rep.id, 'inbound:incoming', { inboundId: id, phone: from });
+          setTimeout(() => {
+            void (async () => {
+              const c = await voiceCall(id);
+              if (!c || c.ended_at || c.cancelled || c.bridge_room) return; // answered or already gone
+              await hangup(id);
+              await transaction(async () => {
+                const lead = await claimManual(rep.id, from);
+                await q(`UPDATE leads SET status = 'queued', next_call_at = now(), attempt_count = 0 WHERE id = $1`, [lead.id]);
+              });
+              emitToUser(rep.id, 'inbound:ended', { phone: from, reason: 'queued' });
+              emitToUser(rep.id, 'queue:changed', {});
+              pokeAdmins('queue');
+              console.log('[inbound] no answer in 45 s — caller queued for user', rep.id);
+            })().catch((e) => console.warn('inbound timeout:', e.message));
+          }, 45_000).unref?.();
+          return res.type('text/xml').send(xml('<Speak>One moment please, connecting you.</Speak>' +
+            '<Conference startConferenceOnEnter="true" endConferenceOnExit="false" maxMembers="1" timeLimit="150" enterSound="" exitSound="" callbackMethod="POST" callbackUrl="' +
+            escape(callbackUrl('conference', id, { stage: 'hold' })) + '">hold-' + escape(id) + '</Conference>'));
+        }
       }
     }
     // Nobody free to take it: queue the callback with the rep the caller knows.
-    const owner = known.rows[0] ?? (await q("SELECT id FROM users WHERE active AND role = 'rep' ORDER BY id LIMIT 1")).rows[0];
+    const owner = known.rows[0] ? { id: known.rows[0].user_id } : (await q("SELECT id FROM users WHERE active AND role = 'rep' ORDER BY id LIMIT 1")).rows[0];
     console.log('[inbound] queued callback for user', owner?.id ?? 'none', 'known was', known.rows[0]?.user_id ?? 'none');
     if (owner) {
       await transaction(async () => {
@@ -212,7 +222,8 @@ async function onRepEvent(type, p, { userId }) {
   if (type === 'call.answered') {
     const call = await voiceCall(p.call_control_id);
     if (call?.ended_at || call?.cancelled) return;
-    const { rowCount } = await q('UPDATE users SET rep_connected = true WHERE id = $1 AND telnyx_session_call_id = $2', [userId, p.call_control_id]);
+    const { rowCount } = await q(`UPDATE users SET rep_connected = true WHERE id = $1 AND telnyx_session_call_id = $2
+      AND EXISTS (SELECT 1 FROM plivo_calls WHERE id = $2 AND NOT cancelled AND ended_at IS NULL)`, [userId, p.call_control_id]);
     if (!rowCount) {
       const { rows: [u] } = await q('SELECT telnyx_session_call_id FROM users WHERE id = $1', [userId]);
       if (!u?.telnyx_session_call_id) throw new Error('rep dial has not been saved yet');
@@ -230,7 +241,8 @@ async function onRepEvent(type, p, { userId }) {
     const burstId = pending?.id ?? activeBurst.get(userId);
     if (burstId) { await cancelOpenLegs(burstId); activeBurst.delete(userId); }
     await q('UPDATE users SET telnyx_session_call_id = NULL WHERE id = $1 AND telnyx_session_call_id = $2', [userId, p.call_control_id]);
-    emitToUser(userId, 'rep:disconnected', { cause: p.hangup_cause });
+    const call = await voiceCall(p.call_control_id);
+    emitToUser(userId, 'rep:disconnected', { cause: call?.idle_disconnect_at ? 'idle_timeout' : p.hangup_cause });
     pokeAdmins('live');
   }
 }

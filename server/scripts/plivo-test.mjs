@@ -165,6 +165,16 @@ try {
   assert.equal(voice.isInvalidDestination(new Error('destination country not allowed')), false);
   passed('live hangup uses CallUUID; caller-ID and permissions errors do not exhaust leads');
 
+  // Idle audio must leave incoming callbacks in the original rep's queue.
+  await q('UPDATE users SET rep_connected=false WHERE id=$1', [rep.id]);
+  const inbound = await callback('/webhooks/plivo/inbound', { From: leads[0].phone, CallUUID: 'queued-inbound-uuid' });
+  assert.equal(inbound.status, 200);
+  assert.match(await inbound.text(), /added to the call-back queue/);
+  const queued = (await q('SELECT user_id,status FROM leads WHERE id=$1', [leads[0].id])).rows[0];
+  assert.equal(queued.user_id, rep.id);
+  assert.equal(queued.status, 'queued');
+  passed('incoming callback with audio off stays assigned to the rep who last called');
+
   const downloads = [];
   globalThis.fetch = async (url, init) => {
     downloads.push({ url: String(url), init });
