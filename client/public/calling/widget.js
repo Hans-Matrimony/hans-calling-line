@@ -6,7 +6,7 @@
   if (!config) return;
   const owner = crypto.randomUUID();
   let leads=[],client=null,sessionId=null,audioUp=false,activeUUID=null,busy=false,muted=false,generation=0,poll=null,refreshing=false;
-  let sdkPromise=null, stopped=false, settingUp=false;
+  let sdkPromise=null, stopped=false, settingUp=false, currentLead=null;
   const notice=document.getElementById('hans-calling-notice');
   const panel=document.createElement('section');
   panel.setAttribute('role','dialog');panel.setAttribute('aria-label','Lead calling');panel.hidden=true;
@@ -23,6 +23,26 @@
     return data;
   }
   const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+  // Local feedback belongs to the CRM document and is never sent as provider audio.
+  let audioContext=null,toneTimer=null;
+  function unlockAudio() {
+    try { const Context=window.AudioContext || window.webkitAudioContext; if(Context && !audioContext)audioContext=new Context();audioContext?.resume().catch(()=>{}); } catch {}
+  }
+  function tone() {
+    try { if(!audioContext || audioContext.state!=='running')return;
+      const oscillator=audioContext.createOscillator(),gain=audioContext.createGain(),now=audioContext.currentTime;
+      oscillator.frequency.value=440;gain.gain.setValueAtTime(0,now);gain.gain.linearRampToValueAtTime(.045,now+.03);
+      gain.gain.setValueAtTime(.045,now+.35);gain.gain.linearRampToValueAtTime(0,now+.4);
+      oscillator.connect(gain);gain.connect(audioContext.destination);oscillator.start(now);oscillator.stop(now+.42);
+    } catch {}
+  }
+  function quiet() {clearInterval(toneTimer);toneTimer=null;window.speechSynthesis?.cancel();}
+  function announce(message,ring=false) {
+    quiet();tone();
+    try {if(window.speechSynthesis && window.SpeechSynthesisUtterance){const words=new SpeechSynthesisUtterance(message);words.lang='en-IN';words.rate=1;window.speechSynthesis.speak(words);}} catch {}
+    if(ring)toneTimer=setInterval(tone,3000);
+  }
+
   function disconnect() {
     audioUp=false;activeUUID=null;muted=false;
     if(client){client.removeAllListeners();try{client.hangup();}catch{}try{client.logout();}catch{}client=null;}
@@ -37,7 +57,7 @@
     await sdkPromise;
   }
   async function connect(current) {
-    status('Allow microphone access to connect audio...');
+    status('Allow microphone access to connect audio...');announce('Connecting audio');
     if(!navigator.mediaDevices?.getUserMedia)throw new Error('Audio needs HTTPS and a microphone.');
     const probe=navigator.mediaDevices.getUserMedia({audio:true}).then(stream=>{stream.getTracks().forEach(track=>track.stop());});
     let timeout;
@@ -78,43 +98,45 @@
     }
     throw new Error('Audio connection timed out.');
   }
-  async function stop(message='Call ended.') {
+  async function stop(message='Call ended.',reason='ended') {
+    quiet();
     generation++;clearTimeout(poll);disconnect();
     panel.querySelector('[data-stop]').disabled=true;
     try {
       // Also recover an audio request whose HTTP response was lost.
       if(!sessionId){const state=await api('state');if(state.session?.owner_token===owner && !state.session.ended_at)sessionId=state.session.id;}
       if(sessionId)await api('stop',{sessionId,owner});
-      sessionId=null;busy=settingUp;status(message);panel.querySelector('[data-close]').hidden=false;
+      sessionId=null;busy=settingUp;status(message);announce('Call ended');
+      window.dispatchEvent(new CustomEvent('hans:calling-ended',{detail:{lead:currentLead,reason}}));panel.querySelector('[data-close]').hidden=false;
     }catch(error){status(error.message+' Use End call again to retry.');}
     finally{panel.querySelector('[data-stop]').disabled=false;panel.querySelector('[data-stop]').textContent='End call';}
   }
   async function call(lead) {
     if(busy){panel.hidden=false;status('A call or audio setup is already in progress.');return;}
-    busy=true;settingUp=true;stopped=false;const current=++generation;
+    unlockAudio();currentLead=lead;busy=true;settingUp=true;stopped=false;const current=++generation;
     panel.hidden=false;panel.querySelector('[data-close]').hidden=true;panel.querySelector('[data-stop]').textContent='Cancel';
     panel.querySelector('[data-name]').textContent=lead.name || 'Requested lead';panel.querySelector('[data-phone]').textContent=lead.phone || '';
     try {
       await connect(current);check(current);
-      status('Audio connected. Calling lead...');
-      const row=await api('call',{owner,sessionId,requestId:lead.requestId,key:crypto.randomUUID()});check(current);
+      status('Audio connected. Calling lead...');announce('Audio connected. Connecting call',true);
+      const row=await api('call',{owner,sessionId,...(lead.autoLeadId ? {autoLeadId:lead.autoLeadId,key:lead.autoLeadId} : {requestId:lead.requestId,key:crypto.randomUUID()})});check(current);
       panel.querySelector('[data-stop]').textContent='End call';
       async function monitor(){
         try {
           check(current);const state=await api('state');check(current);
           if(state.call?.id===row.id){
             if(state.call.ended_at){await stop('Call ended: '+(state.call.hangup_cause || state.call.status));return;}
-            if(state.call.answered_at){const seconds=Math.max(0,Math.floor((Date.now()-Date.parse(state.call.answered_at.replace(' ','T')+'Z'))/1000));status('Connected - '+Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0'));}
+            if(state.call.answered_at){quiet();const seconds=Math.max(0,Math.floor((Date.now()-Date.parse(state.call.answered_at.replace(' ','T')+'Z'))/1000));status('Connected - '+Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0'));}
             else status(state.call.status==='uncertain'?'Checking provider call status...':'Calling lead...');
           }
-          if(!audioUp || state.session?.ended_at){await stop('Audio disconnected.');return;}
+          if(!audioUp || state.session?.ended_at){await stop('Audio disconnected.','error');return;}
         }catch(error){if(current!==generation)return;status(error.message+' Checking status...');}
         poll=setTimeout(monitor,1500);
       }
       settingUp=false;monitor();
-    }catch(error){settingUp=false;if(current===generation)await stop(error.name==='NotAllowedError'?'Microphone blocked. Allow it for CRM and try again.':error.message);else if(!sessionId)busy=false;}
+    }catch(error){settingUp=false;if(current===generation)await stop(error.name==='NotAllowedError'?'Microphone blocked. Allow it for CRM and try again.':error.message,'error');else if(!sessionId)busy=false;}
   }
-  panel.querySelector('[data-stop]').onclick=()=>stop('Call cancelled.');
+  panel.querySelector('[data-stop]').onclick=()=>stop('Call ended by you.',settingUp?'cancelled':'ended');
   panel.querySelector('[data-close]').onclick=()=>{if(!busy)panel.hidden=true;};
   panel.querySelector('[data-mute]').onclick=()=>{if(!client || !audioUp)return;muted=!muted;if(muted)client.mute();else client.unmute();panel.querySelector('[data-mute]').textContent=muted?'Unmute':'Mute';};
   const phone=value=>{let digits=String(value || '').replace(/\D/g,'');if(digits.length===10)digits='91'+digits;return digits.replace(/^00/,'');};
@@ -153,8 +175,8 @@
   if(window.jQuery)window.jQuery(document).ajaxComplete((_event,_xhr,settings)=>{if(!String(settings.url).includes('/calling/'))refresh();});
   refresh();const refreshTimer=setInterval(refresh,15000);
   window.addEventListener('pagehide',()=>{
-    stopped=true;generation++;clearInterval(refreshTimer);clearTimeout(poll);observer.disconnect();disconnect();
+    quiet();stopped=true;generation++;clearInterval(refreshTimer);clearTimeout(poll);observer.disconnect();disconnect();
     if(sessionId)api('stop',{sessionId,owner},true).catch(()=>{});
   });
-  window.HansCalling={call,refresh};
+  window.HansCalling={call,refresh,unlockAudio,hideIdle:()=>{if(!busy)panel.hidden=true;},isBusy:()=>busy,stop:()=>stop('Calling stopped.','user')};
 })();

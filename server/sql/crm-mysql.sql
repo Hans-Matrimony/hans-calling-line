@@ -27,3 +27,13 @@ CREATE TABLE IF NOT EXISTS hans_calling_calls (
   UNIQUE KEY calls_idempotency (crm_user_id, idempotency_key),
   INDEX calls_user (crm_user_id, created_at), INDEX calls_session (session_id, ended_at)
 ) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS hans_calling_auto_leads (
+  id CHAR(36) PRIMARY KEY, crm_user_id BIGINT NOT NULL,
+  active_user BIGINT UNIQUE, active_phone VARCHAR(24) UNIQUE,
+  lead_id BIGINT NOT NULL, lead_type INT NOT NULL,
+  lead_name VARCHAR(255), phone VARCHAR(24) NOT NULL,
+  status VARCHAR(24) NOT NULL DEFAULT 'reserved', outcome VARCHAR(32), disposition VARCHAR(16),
+  request_id BIGINT, created_at DATETIME(3) NOT NULL, updated_at DATETIME(3) NOT NULL,
+  completed_at DATETIME(3), INDEX auto_user (crm_user_id, created_at), INDEX auto_source (lead_type, lead_id)
+) ENGINE=InnoDB;

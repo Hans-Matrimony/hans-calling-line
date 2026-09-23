@@ -16,8 +16,9 @@ Set `CALLING_STORAGE=crm_mysql` on the calling-line backend. In this mode no Pos
 - `hans_calling_sessions`: browser audio sessions and their provider cost.
 - `hans_calling_calls`: requested-lead identity, customer calls, outcomes, recordings, cost and idempotency keys.
 - `hans_calling_admins`: existing calling-line admin logins copied at cutover.
+- `hans_calling_auto_leads`: separate Auto Calling reservations, confirmed dispositions and CRM history references.
 
-CRM source tables are read only for this integration. A database account can be granted SELECT on source tables and write permission only on these prefixed tables after migration.
+The Calling Line backend reads CRM source tables and writes only the prefixed calling tables. Its database account can retain SELECT-only access to source tables after migration. Laravel Auto Calling uses the CRM connection to reserve source leads and apply the existing Pick/Not Pick updates when the TSE saves an outcome.
 
 Set the same random 32+ character value for calling-line `CRM_QUEUE_TOKEN` and Laravel `HANS_DIALER_QUEUE_TOKEN`. The name is retained for deployment compatibility; it now authenticates the server-side calling proxy. There is no default secret. Set calling-line `SESSION_SECRET` to at least 32 random characters. Set Laravel `HANS_DIALER_URL` to the public HTTPS calling-line origin. The browser never receives the shared token, TSE password, or Plivo account secret. CRM requests stay authenticated and CSRF-protected by Laravel, and Node independently checks that the CRM TSE remains active.
 
@@ -55,3 +56,37 @@ php vendor/bin/phpunit tests/Feature/CallingTest.php
 ```
 
 `MYSQLD_PATH` selects a local MySQL binary for the first test. `PLAYWRIGHT_CHANNEL=msedge` selects the installed test browser. The legacy Plivo/audio tests and the frontend build remain part of regression validation.
+
+## Separate CRM Auto Calling
+
+Open **CRM > Auto Calling** with an active TSE account (roles 3, 5, 7). Click **Start calling**, allow microphone access, and keep the page open. Audio connects before dialing. The shared popup provides Mute and End call with local connecting/ended sounds and spoken status messages; Request Leads uses the same popup. Browser speech availability depends on installed voices; the connecting tone is generated locally.
+
+The CRM reserves one random eligible lead at a time, alternating randomly between available source pools:
+
+- Non-Fresh `incomplete_leads` under the Request New Leads filters, assigned creation-age rule, 150-per-day new-lead limit and existing active-bucket limit. Converted/already assigned numbers, Channel1/Punjab, deleted/bakwas and Fresh duplicates are excluded.
+- Rejected `leads` under the existing rejected-lead rules (recent follow-up, rejection ownership restriction, available `request_by`), also excluding Fresh/deleted records.
+
+Fresh means the last 24 hours using `COALESCE(meta_date,created_at)` for incomplete leads and `created_at` for leads. Pending Request Leads numbers are excluded across both source tables and TSEs. A unique active TSE and phone reservation prevents duplicate allocation. Source `request_by` is reserved so the manual request flow does not claim the same row. Existing manual Request Leads calling remains available separately.
+
+After a call ends, its persisted Plivo answer state suggests Pick or Not Pick. The TSE can correct the suggestion and must choose/save an existing CRM disposition. Add Lead opens the existing full CRM form for incomplete leads; rejected leads use the existing follow-up/reassignment behavior and interest values. Negative outcomes use the existing source model updates and `not_pick_data`. Successful saves write a completed `user_request_leads` history row for the authenticated TSE, without adding an item to the manual pending queue. All CRM changes and the reservation completion commit together. Duplicate saves do not apply counters twice.
+
+Only a successful outcome save allows the next reservation/call. **Stop calling** ends current audio/call and pauses progression. Saving a pending outcome after stopping does not restart the run. Reloading also leaves the run stopped and restores the pending lead/outcome; no microphone prompt or new dial occurs until Start/Resume is clicked. An uncalled reserved lead stays assigned to that TSE for resume. Uncertain provider calls must finish reconciliation before marking/advancing.
+
+Calling-line admin/TSE history shows the queue and saved Auto Calling outcome alongside the usual recording, costs and provider status. `HANS_DIALER_ENABLED=false` hides the Auto Calling navigation and blocks new reservations/calls; completing an existing outcome remains possible.
+
+### Deploying the Auto Calling update
+
+1. Deploy Calling Line first. Its startup migration creates `hans_calling_auto_leads` in the configured CRM DB, including for existing installations.
+2. Deploy CRM and run `php artisan migrate --path=database/migrations/2026_09_23_000001_create_hans_calling_auto_leads.php --force`. This migration safely skips the shared table if Calling Line already created it. It retains history on rollback.
+3. Run `php artisan config:cache` and `php artisan view:clear`, then hard-refresh CRM. No additional environment variable is required; keep the existing CRM DB, bridge token and Plivo configuration. `HANS_DIALER_ENABLED=true` enables both CRM calling sections.
+
+Additional isolated checks, run from the CRM repository:
+
+```text
+php vendor/bin/phpunit --filter 'AutoCallingTest|CallingTest'
+# Set AUTO_CALLING_PREVIEW_HTML to a local output file, then run the AutoCallingTest page-render test.
+# With that same environment variable, browser checks use actual Blade HTML with all calls/saves mocked:
+node tests/browser/auto-calling.cjs
+```
+
+The browser test locates the sibling Calling Line checkout by default (`CALLING_ROOT` can override it). No automated check places a real call.

@@ -119,7 +119,9 @@ export function createCrmApp(store, { provider = plivoRequest, verifyWebhook = v
       }
     }
     const where=clauses.join(' AND ');
-    const calls=await q(`SELECT c.*,u.name AS tse_name,u.email AS tse_email FROM hans_calling_calls c LEFT JOIN users u ON u.id=c.crm_user_id
+    const calls=await q(`SELECT c.*,u.name AS tse_name,u.email AS tse_email,a.outcome,a.disposition,IF(a.id IS NULL,'requested','auto') AS queue
+      FROM hans_calling_calls c LEFT JOIN users u ON u.id=c.crm_user_id
+      LEFT JOIN hans_calling_auto_leads a ON a.id=c.idempotency_key AND a.crm_user_id=c.crm_user_id
       WHERE ${where} ORDER BY c.created_at DESC,c.id DESC LIMIT 100 OFFSET ${Math.min(page,100000)*100}`,args);
     const [totals]=await q(`SELECT COUNT(*) AS calls,SUM(c.answered_at IS NOT NULL) AS connected,COALESCE(SUM(c.bill_seconds),0) AS bill_seconds,
       COALESCE(SUM(c.cost_usd),0) AS cost_usd FROM hans_calling_calls c WHERE ${where}`,args);

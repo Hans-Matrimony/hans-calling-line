@@ -104,9 +104,42 @@ try {
   const adminCookie=adminLogin.res.headers.get('set-cookie').split(';')[0];
   const reports=await request('/api/crm-reports',{cookie:adminCookie});assert.equal(reports.res.status,200);assert.equal(JSON.parse(reports.data).calls.length,2);
   assert.equal((await request('/api/calling/leads',{cookie:adminCookie})).res.status,403);
+  // Auto Calling consumes only a CRM-owned durable reservation, never arbitrary browser phone data.
+  await q("ALTER TABLE users ADD temple_id VARCHAR(40)");
+  await q("ALTER TABLE incomplete_leads ADD request_by VARCHAR(40), ADD isDelete INT DEFAULT 0");
+  await q("ALTER TABLE leads ADD request_by VARCHAR(40), ADD is_done INT DEFAULT 2, ADD is_deleted INT DEFAULT 0");
+  await q("UPDATE users SET temple_id='temple-seven' WHERE id=7");
+  await q("UPDATE incomplete_leads SET request_by='temple-seven' WHERE id IN (10,11)");
+  const autoId=randomUUID(),freshId=randomUUID(),foreignId=randomUUID();
+  for(const [id,user,leadId,phone] of [[autoId,7,10,'+919876543210'],[freshId,8,11,'+919876543211'],[foreignId,9,10,'+919876543212']]) {
+    await q(`INSERT INTO hans_calling_auto_leads(id,crm_user_id,active_user,active_phone,lead_id,lead_type,lead_name,phone,created_at,updated_at)
+      VALUES(?,?,?,?,?,1,'Auto test',?,UTC_TIMESTAMP(),UTC_TIMESTAMP())`,[id,user,user,phone,leadId,phone]);
+  }
+  const autoOwner=randomUUID();await service.credentials(7,autoOwner);const autoAudio=await service.startAudio(7,autoOwner);
+  const autoBody={owner:autoOwner,sessionId:autoAudio.id,autoLeadId:autoId,key:autoId,phone:'+19999999999',requestId:9999};
+  await assert.rejects(service.startCall(7,autoBody),e=>e.status===409);
+  await service.event('conference','audio',autoAudio.id,{CallUUID:'auto-rep',ConferenceAction:'enter',ConferenceName:'crm-'+autoAudio.id,ConferenceMemberID:'1'});
+  await assert.rejects(service.startCall(7,{...autoBody,autoLeadId:foreignId,key:foreignId}),e=>e.status===422);
+  await assert.rejects(service.startCall(7,{...autoBody,key:randomUUID()}),e=>e.status===422);
+  await q('UPDATE hans_calling_auto_leads SET lead_id=11,phone=? WHERE id=?',['+919876543211',autoId]);
+  await assert.rejects(service.startCall(7,autoBody),e=>e.status===422,'Fresh cannot be called even with a reservation');
+  await q('UPDATE hans_calling_auto_leads SET lead_id=10,phone=? WHERE id=?',['+919876543210',autoId]);
+  const autoBefore=providerCalls.filter(c=>c.path==='Call/' && c.method==='POST').length;
+  const [autoCall,autoRetry]=await Promise.all([service.startCall(7,autoBody),service.startCall(7,autoBody)]);
+  assert.equal(autoCall.id,autoRetry.id);assert.equal(autoCall.phone,'+919876543210');assert.equal(autoCall.request_id,0);
+  assert.equal(providerCalls.filter(c=>c.path==='Call/' && c.method==='POST').length,autoBefore+1);
+  await service.event('answer','call',autoCall.id,{CallUUID:'auto-customer'});
+  assert.ok((await service.state(7)).call.answered_at,'Plivo answer supplies Pick suggestion even before the conference callback');
+  await service.event('hangup','call',autoCall.id,{CallUUID:'auto-customer',HangupCause:'NORMAL_CLEARING'});
+  await q("UPDATE hans_calling_auto_leads SET status='completed',outcome='add_lead',disposition='pick',active_user=NULL,active_phone=NULL WHERE id=?",[autoId]);
+  assert.equal((await service.startCall(7,autoBody)).id,autoCall.id,'completed retry returns the same call without redialing');
+  const autoReport=JSON.parse((await request('/api/crm-reports',{cookie:adminCookie})).data);
+  const autoReported=autoReport.calls.find(c=>c.id===autoCall.id);assert.equal(autoReported.queue,'auto');assert.equal(autoReported.outcome,'add_lead');
+  await service.stopOwned(7,{owner:autoOwner,sessionId:autoAudio.id});
+  assert.equal(before,JSON.stringify(await q('SELECT * FROM user_request_leads ORDER BY id')));
   await q('UPDATE users SET active_status=0 WHERE id=7');assert.equal((await request('/api/me',{cookie})).res.status,401);
   assert.equal((await request('/webhooks/crm/answer?kind=audio&id='+session.id,{body:{}})).res.status,403);
-  console.log('PASS: real MySQL migration, Fresh filtering, CRM credentials, ownership, audio gating, concurrency, idempotency, redial, callbacks, recordings, stop, reports and unchanged CRM status.');
+  console.log('PASS: real MySQL migration, Fresh filtering, CRM credentials, ownership, audio gating, concurrency, idempotency, redial, callbacks, recordings, stop, reports unchanged CRM status, Auto Calling ownership, Fresh revalidation and auto retry deduplication.');
 } finally {
   if(http)await new Promise(resolve=>http.close(resolve));
   if(store)await store.close();

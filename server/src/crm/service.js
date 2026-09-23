@@ -101,7 +101,7 @@ export function createCallingService(store, provider = plivoRequest) {
     return fresh ? dial('audio', row, 'sip:' + username + '_' + need('PLIVO_AUTH_ID') + '@phone.plivo.com') : row;
   }
   async function startCall(userId, body) {
-    if (!uuid(body.key) || !uuid(body.sessionId) || !uuid(body.owner) || !Number.isSafeInteger(Number(body.requestId))) throw fail(422,'Invalid call request.');
+    if (!uuid(body.key) || !uuid(body.sessionId) || !uuid(body.owner) || (body.autoLeadId ? !uuid(body.autoLeadId) || body.key !== body.autoLeadId : !Number.isSafeInteger(Number(body.requestId)))) throw fail(422,'Invalid call request.');
     configured();
     const { row, fresh } = await store.locked('user:' + userId, async query => {
       const existing = await one(query, 'SELECT * FROM hans_calling_calls WHERE crm_user_id=? AND idempotency_key=?', [userId,body.key]);
@@ -111,7 +111,23 @@ export function createCallingService(store, provider = plivoRequest) {
       if (!session) throw fail(409, 'Audio is not ready. Reconnect before calling.');
       const active = await one(query, 'SELECT id FROM hans_calling_calls WHERE crm_user_id=? AND ended_at IS NULL LIMIT 1', [userId]);
       if (active) throw fail(409,'A call is already in progress.');
-      const [lead] = await eligibleLeads(query,userId,Number(body.requestId));
+      let lead;
+      if (body.autoLeadId) {
+        // The CRM reserves the source. Never accept a phone number or source ID from a browser.
+        const reserved = await one(query, `SELECT a.*,u.temple_id FROM hans_calling_auto_leads a
+          JOIN users u ON u.id=a.crm_user_id WHERE a.id=? AND a.active_user=? AND a.status='reserved'`, [body.autoLeadId,userId]);
+        if (!reserved) throw fail(422,'This Auto Calling lead is no longer reserved for you.');
+        const source = Number(reserved.lead_type) === 1
+          ? await one(query, `SELECT user_phone AS phone FROM incomplete_leads WHERE id=? AND request_by=? AND isDelete=0
+              AND COALESCE(meta_date,created_at)<DATE_SUB(DATE_ADD(UTC_TIMESTAMP(),INTERVAL 330 MINUTE),INTERVAL 24 HOUR)`, [reserved.lead_id,reserved.temple_id])
+          : await one(query, `SELECT u.user_mobile AS phone FROM leads l JOIN user_data u ON u.id=l.user_data_id
+              WHERE l.id=? AND l.request_by=? AND l.is_done=2 AND COALESCE(l.is_deleted,0)=0
+              AND l.created_at<DATE_SUB(DATE_ADD(UTC_TIMESTAMP(),INTERVAL 330 MINUTE),INTERVAL 24 HOUR)`, [reserved.lead_id,reserved.temple_id]);
+        if (!source || normalizePhone(source.phone)!==normalizePhone(reserved.phone)) throw fail(422,'The reserved lead changed or is no longer eligible.');
+        lead = { requestId:0,leadId:reserved.lead_id,leadType:reserved.lead_type,name:reserved.lead_name,phone:source.phone };
+      } else {
+        [lead] = await eligibleLeads(query,userId,Number(body.requestId));
+      }
       if (!lead) throw fail(422,'This lead is fresh, no longer requested, or does not belong to you.');
       const phone = normalizePhone(lead.phone);
       const from = phone.startsWith('+91') ? need('FROM_NUMBER_INDIA') : phone.startsWith('+1') ? need('FROM_NUMBER_US') : need('FROM_NUMBER_EU');
@@ -147,6 +163,9 @@ export function createCallingService(store, provider = plivoRequest) {
     if (callUUID && typeof callUUID === 'string') {
       if (row.call_uuid && row.call_uuid !== callUUID) throw fail(409, 'Provider call identifier mismatch.');
       await q(`UPDATE ${table(kind)} SET call_uuid=COALESCE(call_uuid,?) WHERE id=?`, [callUUID,id]);
+    }
+    if (eventName === 'answer' && kind === 'call') {
+      await q('UPDATE hans_calling_calls SET answered_at=COALESCE(answered_at,UTC_TIMESTAMP(3)) WHERE id=?',[id]);
     }
     if (eventName === 'hangup' || eventName === 'fallback') {
       await q(`UPDATE ${table(kind)} SET status='ended',ended_at=COALESCE(ended_at,UTC_TIMESTAMP(3)),hangup_cause=? WHERE id=?`, [String(body.HangupCauseName || body.HangupCause || eventName).slice(0,128),id]);
