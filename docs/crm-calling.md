@@ -28,9 +28,9 @@ Calling-line's normal login page accepts CRM TSE email/password. Admins see all 
 
 ## CRM calling on/off switch
 
-Set `HANS_DIALER_ENABLED=false` in the Laravel CRM environment to hide calling buttons and prevent new CRM calls. Set it to `true` to enable calling again. The default is `true`, preserving existing deployments.
+Set `HANS_DIALER_ENABLED=false` in the Laravel CRM environment to hide Request Leads calling buttons and prevent new Request Leads calls. Request Leads retains its default of `true`. The separate Auto Calling section is independently controlled by `HANS_AUTO_CALLING_ENABLED` (default `false`). Set either flag to `true` to enable only that feature.
 
-After changing this value, run `php artisan config:cache` and `php artisan view:clear` in the CRM deployment. Newly loaded pages omit the calling widget entirely when disabled. Already-open pages remove their Call buttons on the next successful lead refresh (normally within 15 seconds); an idle popup is hidden too. New audio/login/call proxy requests are rejected immediately after the configuration is refreshed. Existing call status and End call controls remain available until the current call finishes. The switch affects CRM calling; calling-line reporting and login remain available.
+After changing this value, run `php artisan config:cache` and `php artisan view:clear` in the CRM deployment. Newly loaded pages omit the calling widget entirely when disabled. Already-open pages remove their Call buttons on the next successful lead refresh (normally within 15 seconds); an idle popup is hidden too. New audio/login/call proxy requests are rejected immediately after the configuration is refreshed. Existing call status and End call controls remain available until the current call finishes. Each flag gates its own CRM page, audio credentials and call proxy routes. Either feature can remain enabled while the other is disabled; calling-line reporting and login remain available.
 
 ## Cutover
 
@@ -72,13 +72,13 @@ After a call ends, its persisted Plivo answer state suggests Pick or Not Pick. T
 
 Only a successful outcome save allows the next reservation/call. **Stop calling** ends current audio/call and pauses progression. Saving a pending outcome after stopping does not restart the run. Reloading also leaves the run stopped and restores the pending lead/outcome; no microphone prompt or new dial occurs until Start/Resume is clicked. An uncalled reserved lead stays assigned to that TSE for resume. Uncertain provider calls must finish reconciliation before marking/advancing.
 
-Calling-line admin/TSE history shows the queue and saved Auto Calling outcome alongside the usual recording, costs and provider status. `HANS_DIALER_ENABLED=false` hides the Auto Calling navigation and blocks new reservations/calls; completing an existing outcome remains possible.
+Calling-line admin/TSE history shows the queue and saved Auto Calling outcome alongside the usual recording, costs and provider status. `HANS_AUTO_CALLING_ENABLED=false` hides the Auto Calling navigation and blocks new reservations/calls; completing an existing outcome remains possible.
 
 ### Deploying the Auto Calling update
 
 1. Deploy Calling Line first. Its startup migration creates `hans_calling_auto_leads` in the configured CRM DB, including for existing installations.
 2. Deploy CRM and run `php artisan migrate --path=database/migrations/2026_09_23_000001_create_hans_calling_auto_leads.php --force`. This migration safely skips the shared table if Calling Line already created it. It retains history on rollback.
-3. Run `php artisan config:cache` and `php artisan view:clear`, then hard-refresh CRM. No additional environment variable is required; keep the existing CRM DB, bridge token and Plivo configuration. `HANS_DIALER_ENABLED=true` enables both CRM calling sections.
+3. Run `php artisan config:cache` and `php artisan view:clear`, then hard-refresh CRM. Keep the existing CRM DB, bridge token and Plivo configuration. Set `HANS_AUTO_CALLING_ENABLED=true` to enable Auto Calling. The existing `HANS_DIALER_ENABLED` value separately controls Request Leads buttons and calls.
 
 Additional isolated checks, run from the CRM repository:
 
