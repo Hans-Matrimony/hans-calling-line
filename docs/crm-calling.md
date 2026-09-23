@@ -25,6 +25,12 @@ Retain the existing Plivo account/application variables and owned `FROM_NUMBER_I
 
 Calling-line's normal login page accepts CRM TSE email/password. Admins see all CRM call logs, audio sessions, costs and recordings; TSEs see their own records. Playback is authenticated and proxied; Plivo credentials never pass to the browser or redirect host. Filters use IST dates, including the whole selected end date. Session history shows the latest 100 sessions separately from the customer-call filter.
 
+## CRM calling on/off switch
+
+Set `HANS_DIALER_ENABLED=false` in the Laravel CRM environment to hide calling buttons and prevent new CRM calls. Set it to `true` to enable calling again. The default is `true`, preserving existing deployments.
+
+After changing this value, run `php artisan config:cache` and `php artisan view:clear` in the CRM deployment. Newly loaded pages omit the calling widget entirely when disabled. Already-open pages remove their Call buttons on the next successful lead refresh (normally within 15 seconds); an idle popup is hidden too. New audio/login/call proxy requests are rejected immediately after the configuration is refreshed. Existing call status and End call controls remain available until the current call finishes. The switch affects CRM calling; calling-line reporting and login remain available.
+
 ## Cutover
 
 1. Build/test both repositories. `npm run build` in `client` copies the installed Plivo browser SDK and license into static assets; Docker already includes those assets. Deploy the calling-line build and CRM changes together.

@@ -140,7 +140,7 @@
   }
   async function refresh(){
     if(refreshing || stopped)return;refreshing=true;
-    try{const data=await api('leads');leads=data.leads || [];attach();if(notice)notice.textContent='';}
+    try{const data=await api('leads');leads=data.leads || [];attach();if(data.enabled===false && !busy)panel.hidden=true;if(notice)notice.textContent='';}
     catch(error){if(notice)notice.textContent=error.message;}
     finally{refreshing=false;}
   }

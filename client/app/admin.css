@@ -186,3 +186,69 @@
 
 .ad-who { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
 .ad-who .btn svg { width: 15px; height: 15px; }
+
+/* CRM mode shares the established admin shell, controls and table styles. */
+.crm-workspace .side nav { display: grid; gap: 4px; }
+.crm-workspace .side .nav { width: 100%; }
+.crm-workspace .ad-foot p { margin-top: 10px; }
+.crm-workspace .topbar { min-height: 78px; }
+.crm-eyebrow { color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; }
+.crm-account { display: flex; align-items: center; gap: 10px; margin-left: auto; min-width: 0; }
+.crm-email { max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--muted); }
+.crm-filters { gap: 14px; align-items: end; }
+.crm-filters label { display: grid; gap: 6px; min-width: 135px; }
+.crm-filters select { max-width: 240px; }
+.crm-refresh { display: flex; align-items: center; gap: 12px; margin-left: auto; min-height: 35px; }
+.crm-screen { max-width: none; gap: 20px; padding-top: 22px; }
+.crm-kpis { grid-template-columns: minmax(210px,1.3fr) repeat(3,minmax(145px,1fr)); }
+.crm-kpis .ad-kpi { padding: 20px; gap: 10px; box-shadow: var(--shadow-sm); }
+.crm-kpis .ad-kpi.hero { grid-column: auto; background: linear-gradient(125deg,var(--panel),var(--blue-dim)); }
+.crm-kpis .ad-kpi.hero .v { color: var(--blue-ink); }
+.crm-report-panel { padding: 20px; box-shadow: var(--shadow-sm); overflow: hidden; }
+.crm-report-panel .panel-head { margin-bottom: 18px; flex-wrap: wrap; gap: 12px; }
+.crm-panel-title { font-size: 16px; font-weight: 600; letter-spacing: -.02em; }
+.crm-caption { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.crm-panel-title + .crm-caption { margin-top: 4px; }
+.crm-table th { padding-top: 10px; padding-bottom: 10px; background: var(--panel-2); }
+.crm-table td { padding-top: 14px; padding-bottom: 14px; }
+.crm-table tbody tr:hover { background: var(--bg); }
+.crm-date, .crm-phone { white-space: nowrap; }
+.crm-cause { text-transform: capitalize; min-width: 110px; color: var(--muted); font-size: 12px; }
+.crm-recording { text-decoration: none; color: var(--blue-ink); }
+.crm-empty { display: grid; justify-items: center; gap: 9px; padding: 42px 16px; text-align: center; color: var(--muted); }
+.crm-empty svg { width: 30px; height: 30px; color: var(--blue); margin-bottom: 4px; }
+.crm-empty strong { color: var(--ink-2); font-size: 14px; font-weight: 500; }
+.crm-empty span { max-width: 420px; font-size: 12.5px; }
+.crm-actions { display: flex; gap: 8px; }
+.crm-cost-note { margin-top: 16px; }
+.crm-error { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 14px 18px; border: 1px solid var(--coral-line); border-radius: var(--radius); background: var(--coral-dim); color: var(--coral-ink); font-size: 13px; }
+.crm-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; color: var(--muted); font-size: 11.5px; }
+@media (max-width: 1200px) { .crm-kpis { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media (max-width: 960px) {
+  .crm-workspace .side { gap: 12px; padding: 12px 18px; }
+  .crm-workspace .side .brand { padding: 0; margin: 0; }
+  .crm-workspace .side nav { display: flex; flex-wrap: wrap; gap: 4px; }
+  .crm-workspace .side .nav { width: auto; }
+  .crm-workspace .side .ad-foot { display: none; }
+}
+@media (max-width: 560px) {
+  .crm-workspace .topbar, .crm-filters { padding: 14px; }
+  .crm-workspace .side { padding: 14px; }
+  .crm-workspace .side nav { width: 100%; }
+  .crm-workspace .side .nav { padding: 8px; font-size: 12px; }
+  .crm-workspace .side .nav svg { width: 15px; }
+  .crm-email { max-width: 125px; font-size: 11px; }
+  .crm-account { gap: 6px; }
+  .crm-account > .ad-pill { display: none; }
+  .crm-filters label { min-width: 0; flex: 1 1 135px; }
+  .crm-filters input, .crm-filters select { width: 100%; max-width: none; }
+  .crm-refresh { width: 100%; justify-content: space-between; }
+  .crm-screen { padding: 14px; gap: 14px; }
+  .crm-kpis { gap: 10px; }
+  .crm-kpis .ad-kpi { padding: 14px; }
+  .crm-kpis .ad-kpi .v { font-size: 21px; }
+  .crm-kpis .ad-kpi.hero .v { font-size: 28px; }
+  .crm-kpis .ad-kpi .l { font-size: 9px; }
+  .crm-kpis .ad-kpi .d { font-size: 10px; }
+  .crm-report-panel { padding: 16px; }
+}

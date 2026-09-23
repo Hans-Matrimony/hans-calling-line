@@ -9,7 +9,7 @@ const server=http.createServer((_req,res)=>{res.setHeader('Content-Type','text/h
   const errors=[];let page;
   try {
     page=await browser.newPage({viewport:{width:1100,height:750}});page.on('pageerror',e=>errors.push(e.message));
-    let leads=[{requestId:1,leadId:10,leadType:1,name:'Old requested',phone:'9876543210'}],writes=[],audioReady=false,state={session:null,call:null},audioOwner,denyMic=false,holdAudio=false;
+    let leads=[{requestId:1,leadId:10,leadType:1,name:'Old requested',phone:'9876543210'}],writes=[],audioReady=false,state={session:null,call:null},audioOwner,denyMic=false,holdAudio=false,enabled=true;
     await page.addInitScript(()=>{
       window.HansCallingConfig={base:'/crm/calling',sdk:'/mock-plivo.js',csrf:'test-csrf'};
       window.micCount=0;window.denyMic=false;
@@ -25,7 +25,7 @@ const server=http.createServer((_req,res)=>{res.setHeader('Content-Type','text/h
       const p=url.pathname;if(!p.startsWith('/crm/calling/'))return route.continue();
       const body=req.method()==='POST'?req.postDataJSON():null;if(body)writes.push({p,body});
       let result={};
-      if(p.endsWith('/leads'))result={leads};
+      if(p.endsWith('/leads'))result={enabled,leads:enabled?leads:[]};
       else if(p.endsWith('/credentials'))result={token:'test-token'};
       else if(p.endsWith('/audio')){
         audioOwner=body.owner;state.session={id:'audio-session',owner_token:audioOwner,status:'starting',ended_at:null,stop_requested:0};
@@ -52,6 +52,11 @@ const server=http.createServer((_req,res)=>{res.setHeader('Content-Type','text/h
     await page.evaluate(()=>{document.getElementById('rows').insertAdjacentHTML('beforeend','<tr><td>Newly requested</td><td><button class="btnPickup" id="12" mobile="9876543212">Pickup</button></td></tr>');window.HansCalling.refresh();});
     await page.waitForFunction(()=>document.querySelectorAll('[data-hans-request]').length===2);
     const shots=path.resolve(__dirname,'../../.local/crm-ui');fs.mkdirSync(shots,{recursive:true});await page.screenshot({path:path.join(shots,'requested-call-buttons.png')});
+    enabled=false;await page.evaluate(()=>window.HansCalling.refresh());
+    await page.waitForFunction(()=>document.querySelectorAll('[data-hans-request]').length===0);
+    assert.equal(await page.getByRole('dialog',{name:'Lead calling'}).isVisible(),false,'disabled calling hides idle popup');
+    enabled=true;await page.evaluate(()=>window.HansCalling.refresh());
+    await page.waitForFunction(()=>document.querySelectorAll('[data-hans-request]').length===2);
     leads=leads.slice(0,1);await boot();await page.evaluate(()=>window.denyMic=true);await page.getByRole('button',{name:'Call',exact:true}).click();
     await page.getByText('Microphone blocked. Allow it for CRM and try again.',{exact:true}).waitFor();assert.equal(writes.filter(w=>w.p.endsWith('/audio') || w.p.endsWith('/call')).length,0,'denied mic must never dial');
     await boot();holdAudio=true;await page.getByRole('button',{name:'Call',exact:true}).click();
