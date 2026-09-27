@@ -19,7 +19,7 @@
       headers:{Accept:'application/json',...(body?{'Content-Type':'application/json','X-CSRF-TOKEN':config.csrf || ''}:{})},
       ...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(35000)});
     let data;try{data=await response.json();}catch{throw new Error('Calling service is unavailable.');}
-    if(!response.ok)throw new Error(data.error || data.message || 'Calling request failed.');
+    if(!response.ok){const error=new Error(data.error || data.message || 'Calling request failed.');error.code=data.code;throw error;}
     return data;
   }
   const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -134,7 +134,7 @@
         poll=setTimeout(monitor,1500);
       }
       settingUp=false;monitor();
-    }catch(error){settingUp=false;if(current===generation)await stop(error.name==='NotAllowedError'?'Microphone blocked. Allow it for CRM and try again.':error.message,'error');else if(!sessionId)busy=false;}
+    }catch(error){settingUp=false;if(current===generation)await stop(error.name==='NotAllowedError'?'Microphone blocked. Allow it for CRM and try again.':error.message,error.code==='AUTO_LEAD_SKIPPED'?'skipped':'error');else if(!sessionId)busy=false;}
   }
   panel.querySelector('[data-stop]').onclick=()=>stop('Call ended by you.',settingUp?'cancelled':'ended');
   panel.querySelector('[data-close]').onclick=()=>{if(!busy)panel.hidden=true;};
