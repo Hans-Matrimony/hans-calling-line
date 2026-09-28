@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { one, fail, eligibleLeads } from './store.js';
 import { createCallingService } from './service.js';
+import { createInboundService } from './inbound.js';
 import { validWebhook, plivoRequest } from '../plivoTransport.js';
 
 const COOKIE = 'hans_session';
@@ -19,6 +20,7 @@ export function createCrmApp(store, { provider = plivoRequest, verifyWebhook = v
   if (!secret || secret.length < 32 || !bridge || bridge.length < 32) throw new Error('CRM calling requires SESSION_SECRET and CRM_QUEUE_TOKEN of at least 32 characters.');
   const app = express();
   const service = createCallingService(store,provider);
+  const inbound = createInboundService(store);
   const q = store.query;
   const user = async id => {
     const row = await one(q,'SELECT id,name,email,mobile AS phone,role,active_status FROM users WHERE id=?',[id]);
@@ -42,6 +44,14 @@ export function createCrmApp(store, { provider = plivoRequest, verifyWebhook = v
   app.use(express.urlencoded({extended:false,limit:'32kb'}));
   app.use(cookieParser());
   app.get('/health',async (_req,res) => { await q('SELECT 1'); res.json({ok:true,storage:'crm_mysql'}); });
+  app.post('/webhooks/crm/inbound',async (req,res) => {
+    if (!verifyWebhook(req)) return res.sendStatus(403);
+    res.type('text/xml').send(await inbound.answer(req.body));
+  });
+  app.post('/webhooks/crm/inbound/:event',async (req,res) => {
+    if (!verifyWebhook(req)) return res.sendStatus(403);
+    res.type('text/xml').send(await inbound.event(req.params.event,req.query.id || req.body.CallUUID,req.body));
+  });
   app.post('/webhooks/crm/:event',async (req,res) => {
     if (!verifyWebhook(req)) return res.sendStatus(403);
     const xml = await service.event(req.params.event,req.query.kind,req.query.id,req.body);

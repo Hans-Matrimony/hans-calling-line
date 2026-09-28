@@ -37,3 +37,16 @@ CREATE TABLE IF NOT EXISTS hans_calling_auto_leads (
   request_id BIGINT, created_at DATETIME(3) NOT NULL, updated_at DATETIME(3) NOT NULL,
   completed_at DATETIME(3), INDEX auto_user (crm_user_id, created_at), INDEX auto_source (lead_type, lead_id)
 ) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS hans_calling_inbound_calls (
+  call_uuid VARCHAR(128) PRIMARY KEY, from_number VARCHAR(24) NOT NULL, to_number VARCHAR(24) NOT NULL,
+  crm_user_id BIGINT, outbound_call_id CHAR(36), destination VARCHAR(24),
+  status VARCHAR(24) NOT NULL, b_leg_uuid VARCHAR(128), hangup_cause VARCHAR(128),
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  answered_at DATETIME(3), ended_at DATETIME(3), bill_seconds INT,
+  INDEX inbound_user (crm_user_id, created_at)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS hans_calling_inbound_settings (
+  crm_user_id BIGINT PRIMARY KEY, mobile VARCHAR(24), updated_by BIGINT NOT NULL, updated_at DATETIME NOT NULL
+) ENGINE=InnoDB;
