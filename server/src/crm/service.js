@@ -123,6 +123,8 @@ export function createCallingService(store, provider = plivoRequest) {
           : await one(query, `SELECT u.user_mobile AS phone FROM leads l JOIN user_data u ON u.id=l.user_data_id
               WHERE l.id=? AND l.request_by=? AND l.is_done=2 AND COALESCE(l.is_deleted,0)=0
               AND l.created_at<DATE_SUB(DATE_ADD(UTC_TIMESTAMP(),INTERVAL 330 MINUTE),INTERVAL 24 HOUR)`, [reserved.lead_id,reserved.temple_id]);
+        const indianMobile = value => /^(?:\+91|0091|91)?[6-9][0-9]{9}$/.test(String(value || '').replace(/[\s()-]/g,''));
+        if (!indianMobile(source?.phone) || !indianMobile(reserved.phone)) throw fail(422,'The reserved lead changed or is no longer eligible.');
         if (!source || normalizePhone(source.phone)!==normalizePhone(reserved.phone)) throw fail(422,'The reserved lead changed or is no longer eligible.');
         lead = { requestId:0,leadId:reserved.lead_id,leadType:reserved.lead_type,name:reserved.lead_name,phone:source.phone };
       } else {
@@ -130,7 +132,12 @@ export function createCallingService(store, provider = plivoRequest) {
       }
       if (!lead) throw fail(422,'This lead is fresh, no longer requested, or does not belong to you.');
       const phone = normalizePhone(lead.phone);
-      const from = phone.startsWith('+91') ? need('FROM_NUMBER_INDIA') : phone.startsWith('+1') ? need('FROM_NUMBER_US') : need('FROM_NUMBER_EU');
+      const callerKey = phone.startsWith('+91') ? 'FROM_NUMBER_INDIA' : phone.startsWith('+1') ? 'FROM_NUMBER_US' : 'FROM_NUMBER_EU';
+      const from = process.env[callerKey]?.trim();
+      if (!from) {
+        console.warn('[crm-calling] Missing caller-ID configuration:', callerKey);
+        throw fail(503, "Calling is not configured for this lead's country. Ask your administrator to verify the phone country code or enable calling for that country.");
+      }
       const id = randomUUID();
       await query(`INSERT INTO hans_calling_calls(id,crm_user_id,request_id,session_id,idempotency_key,lead_id,lead_type,lead_name,phone,from_number)
         VALUES(?,?,?,?,?,?,?,?,?,?)`, [id,userId,lead.requestId,session.id,body.key,lead.leadId,lead.leadType,lead.name || '',phone,from]);
