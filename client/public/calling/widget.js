@@ -5,7 +5,7 @@
   const config = window.HansCallingConfig;
   if (!config) return;
   const owner = crypto.randomUUID();
-  let leads=[],client=null,sessionId=null,audioUp=false,activeUUID=null,busy=false,muted=false,generation=0,poll=null,refreshing=false;
+  let leads=[],client=null,sessionId=null,audioUp=false,activeUUID=null,busy=false,muted=false,generation=0,audioGeneration=0,poll=null,refreshing=false;
   let sdkPromise=null, stopped=false, settingUp=false, currentLead=null;
   const notice=document.getElementById('hans-calling-notice');
   const panel=document.createElement('section');
@@ -44,7 +44,7 @@
   }
 
   function disconnect() {
-    audioUp=false;activeUUID=null;muted=false;
+    audioGeneration++;audioUp=false;activeUUID=null;muted=false;
     if(client){client.removeAllListeners();try{client.hangup();}catch{}try{client.logout();}catch{}client=null;}
     panel.querySelector('[data-mute]').disabled=true;panel.querySelector('[data-mute]').textContent='Mute';
   }
@@ -67,18 +67,19 @@
     const [credentials]=await Promise.all([api('credentials',{owner}),sdk()]);check(current);
     const Constructor=window.Plivo.default || window.Plivo;
     client=new Constructor({debug:'ERROR',permOnClick:true,enableTracking:false,closeProtection:false}).client;
+    const audioToken=++audioGeneration;
     client.setRingTone(false);client.setConnectTone(false);
     let logged=false,failed=null;
-    client.on('onLogin',()=>{logged=true;});
-    client.on('onLoginFailed',()=>{failed=new Error('Audio login failed.');});
-    client.on('onMediaPermission',event=>{if(event.status==='failure')failed=new Error('Microphone permission denied.');});
-    client.on('onConnectionChange',info=>{if(info.state==='disconnected'){audioUp=false;failed=new Error('Audio connection lost.');}});
+    client.on('onLogin',()=>{if(audioToken===audioGeneration)logged=true;});
+    client.on('onLoginFailed',()=>{if(audioToken===audioGeneration)failed=new Error('Audio login failed.');});
+    client.on('onMediaPermission',event=>{if(audioToken===audioGeneration && event.status==='failure')failed=new Error('Microphone permission denied.');});
+    client.on('onConnectionChange',info=>{if(audioToken===audioGeneration && info.state==='disconnected'){audioUp=false;failed=new Error('Audio connection lost.');}});
     client.on('onIncomingCall',(_caller,_headers,info)=>{
-      if(current!==generation || activeUUID){client?.reject(info.callUUID);return;}
+      if(audioToken!==audioGeneration || activeUUID){client?.reject(info.callUUID);return;}
       activeUUID=info.callUUID;if(!client.answer(info.callUUID,'reject'))failed=new Error('Could not connect audio.');
     });
-    client.on('onCallAnswered',info=>{if(info?.callUUID===activeUUID)audioUp=true;});
-    const ended=info=>{if(info?.callUUID===activeUUID){audioUp=false;activeUUID=null;}};
+    client.on('onCallAnswered',info=>{if(audioToken===audioGeneration && info?.callUUID===activeUUID)audioUp=true;});
+    const ended=info=>{if(audioToken===audioGeneration && info?.callUUID===activeUUID){audioUp=false;activeUUID=null;}};
     client.on('onCallTerminated',(_cause,info)=>ended(info));client.on('onIncomingCallCanceled',ended);
     client.on('onCallFailed',(_cause,info)=>ended(info));
     if(!client.loginWithAccessToken(credentials.token))throw new Error('Audio login was rejected.');
@@ -97,6 +98,15 @@
       await sleep(600);
     }
     throw new Error('Audio connection timed out.');
+  }
+  function finishUnanswered(message) {
+    quiet();clearTimeout(poll);poll=null;
+    settingUp=false;busy=false;status(message);announce('Call did not connect. Audio is ready for the next lead.');
+    panel.querySelector('[data-stop]').disabled=false;
+    panel.querySelector('[data-stop]').textContent='Disconnect audio';
+    panel.querySelector('[data-close]').hidden=false;
+    window.dispatchEvent(new CustomEvent('hans:calling-ended',{detail:{lead:currentLead,reason:'ended'}}));
+    currentLead=null;
   }
   async function stop(message='Call ended.',reason='ended') {
     quiet();
@@ -117,7 +127,14 @@
     panel.hidden=false;panel.querySelector('[data-close]').hidden=true;panel.querySelector('[data-stop]').textContent='Cancel';
     panel.querySelector('[data-name]').textContent=lead.name || 'Requested lead';panel.querySelector('[data-phone]').textContent=lead.phone || '';
     try {
-      await connect(current);check(current);
+      let reuseAudio=Boolean(client && audioUp && sessionId);
+      if(reuseAudio){
+        const state=await api('state');check(current);
+        reuseAudio=state.session?.id===sessionId && !state.session?.ended_at && !state.session?.stop_requested && state.session?.status==='ready';
+        if(!reuseAudio){disconnect();sessionId=null;}
+      }
+      if(!reuseAudio)await connect(current);
+      check(current);
       status('Audio connected. Calling lead...');announce('Audio connected. Connecting call',true);
       const row=await api('call',{owner,sessionId,...(lead.autoLeadId ? {autoLeadId:lead.autoLeadId,key:lead.autoLeadId} : {requestId:lead.requestId,key:crypto.randomUUID()})});check(current);
       panel.querySelector('[data-stop]').textContent='End call';
@@ -125,7 +142,12 @@
         try {
           check(current);const state=await api('state');check(current);
           if(state.call?.id===row.id){
-            if(state.call.ended_at){await stop('Call ended: '+(state.call.hangup_cause || state.call.status));return;}
+            if(state.call.ended_at){
+              const result='Call ended: '+(state.call.hangup_cause || state.call.status);
+              if(!state.call.answered_at)finishUnanswered(result);
+              else await stop(result);
+              return;
+            }
             if(state.call.answered_at){quiet();const seconds=Math.max(0,Math.floor((Date.now()-Date.parse(state.call.answered_at.replace(' ','T')+'Z'))/1000));status('Connected - '+Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0'));}
             else status(state.call.status==='uncertain'?'Checking provider call status...':'Calling lead...');
           }
