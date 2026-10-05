@@ -136,7 +136,7 @@
       if(!reuseAudio)await connect(current);
       check(current);
       status('Audio connected. Calling lead...');announce('Audio connected. Connecting call',true);
-      const row=await api('call',{owner,sessionId,...(lead.autoLeadId ? {autoLeadId:lead.autoLeadId,key:lead.autoLeadId} : {requestId:lead.requestId,key:crypto.randomUUID()})});check(current);
+      const row=await api('call',{owner,sessionId,...(lead.manualPhone ? {manualPhone:lead.manualPhone,key:lead.manualDialKey || crypto.randomUUID()} : lead.autoLeadId ? {autoLeadId:lead.autoLeadId,key:lead.autoLeadId} : {requestId:lead.requestId,key:crypto.randomUUID()})});check(current);
       panel.querySelector('[data-stop]').textContent='End call';
       async function monitor(){
         try {

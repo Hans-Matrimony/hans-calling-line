@@ -129,7 +129,8 @@ export function createCrmApp(store, { provider = plivoRequest, verifyWebhook = v
       }
     }
     const where=clauses.join(' AND ');
-    const calls=await q(`SELECT c.*,u.name AS tse_name,u.email AS tse_email,a.outcome,a.disposition,IF(a.id IS NULL,'requested','auto') AS queue
+    const calls=await q(`SELECT c.*,u.name AS tse_name,u.email AS tse_email,a.outcome,a.disposition,
+      CASE WHEN c.request_id=-1 THEN 'manual' WHEN a.id IS NULL THEN 'requested' ELSE 'auto' END AS queue
       FROM hans_calling_calls c LEFT JOIN users u ON u.id=c.crm_user_id
       LEFT JOIN hans_calling_auto_leads a ON a.id=c.idempotency_key AND a.crm_user_id=c.crm_user_id
       WHERE ${where} ORDER BY c.created_at DESC,c.id DESC LIMIT 100 OFFSET ${Math.min(page,100000)*100}`,args);

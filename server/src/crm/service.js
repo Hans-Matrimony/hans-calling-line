@@ -101,7 +101,12 @@ export function createCallingService(store, provider = plivoRequest) {
     return fresh ? dial('audio', row, 'sip:' + username + '_' + need('PLIVO_AUTH_ID') + '@phone.plivo.com') : row;
   }
   async function startCall(userId, body) {
-    if (!uuid(body.key) || !uuid(body.sessionId) || !uuid(body.owner) || (body.autoLeadId ? !uuid(body.autoLeadId) || body.key !== body.autoLeadId : !Number.isSafeInteger(Number(body.requestId)))) throw fail(422,'Invalid call request.');
+    const manual = body.manualPhone != null;
+    const manualDigits = String(body.manualPhone ?? '').replace(/\D/g,'');
+    const validManual = /^(?:91)?[6-9]\d{9}$/.test(manualDigits);
+    if (!uuid(body.key) || !uuid(body.sessionId) || !uuid(body.owner)
+      || (manual ? !validManual || body.autoLeadId != null || body.requestId != null
+        : body.autoLeadId ? !uuid(body.autoLeadId) || body.key !== body.autoLeadId : !Number.isSafeInteger(Number(body.requestId)))) throw fail(422,'Invalid call request.');
     configured();
     const { row, fresh } = await store.locked('user:' + userId, async query => {
       const existing = await one(query, 'SELECT * FROM hans_calling_calls WHERE crm_user_id=? AND idempotency_key=?', [userId,body.key]);
@@ -112,7 +117,11 @@ export function createCallingService(store, provider = plivoRequest) {
       const active = await one(query, 'SELECT id FROM hans_calling_calls WHERE crm_user_id=? AND ended_at IS NULL LIMIT 1', [userId]);
       if (active) throw fail(409,'A call is already in progress.');
       let lead;
-      if (body.autoLeadId) {
+      if (manual) {
+        const digits = manualDigits.length === 12 ? manualDigits.slice(2) : manualDigits;
+        if (!/^[6-9]\d{9}$/.test(digits)) throw fail(422,'Enter a valid 10-digit Indian mobile number.');
+        lead = { requestId:-1,leadId:0,leadType:-1,name:'Manual dial',phone:'+91'+digits };
+      } else if (body.autoLeadId) {
         // The CRM reserves the source. Never accept a phone number or source ID from a browser.
         const reserved = await one(query, `SELECT a.*,u.temple_id FROM hans_calling_auto_leads a
           JOIN users u ON u.id=a.crm_user_id WHERE a.id=? AND a.active_user=? AND a.status='reserved'`, [body.autoLeadId,userId]);
@@ -132,6 +141,7 @@ export function createCallingService(store, provider = plivoRequest) {
       }
       if (!lead) throw fail(422,'This lead is fresh, no longer requested, or does not belong to you.');
       const phone = normalizePhone(lead.phone);
+      if (manual && !/^\+91[6-9]\d{9}$/.test(phone)) throw fail(422,'Enter a valid 10-digit Indian mobile number.');
       const callerKey = phone.startsWith('+91') ? 'FROM_NUMBER_INDIA' : phone.startsWith('+1') ? 'FROM_NUMBER_US' : 'FROM_NUMBER_EU';
       const from = process.env[callerKey]?.trim();
       if (!from) {
