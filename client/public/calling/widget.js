@@ -144,7 +144,7 @@
           if(state.call?.id===row.id){
             if(state.call.ended_at){
               const result='Call ended: '+(state.call.hangup_cause || state.call.status);
-              if(!state.call.answered_at)finishUnanswered(result);
+              if(!state.call.answered_at && config.scope==='auto')finishUnanswered(result);
               else await stop(result);
               return;
             }
