@@ -46,7 +46,7 @@ export const eligibleSql = `SELECT r.id AS requestId, r.lead_id AS leadId, r.lea
   LEFT JOIN user_data u ON u.id=l.user_data_id
   LEFT JOIN incomplete_leads i ON r.lead_type IN (1,2,4,5,6,7,8,9) AND i.id=r.lead_id
   WHERE r.user_id=? AND r.lead_status='requested' AND r.lead_type IN (0,1,2,3,4,5,6,7,8,9)
-    AND (CASE WHEN r.lead_type IN (0,3) THEN l.created_at ELSE COALESCE(i.meta_date,i.created_at) END) < DATE_SUB(DATE_ADD(UTC_TIMESTAMP(), INTERVAL 330 MINUTE), INTERVAL 24 HOUR)
+    AND (CASE WHEN r.lead_type IN (0,3) THEN u.id ELSE i.id END) IS NOT NULL
     AND r.created_at >= ? AND r.created_at < DATE_ADD(?, INTERVAL 1 DAY)`;
 export async function eligibleLeads(q, userId, requestId) {
   const today = crmToday();

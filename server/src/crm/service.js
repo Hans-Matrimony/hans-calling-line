@@ -139,7 +139,7 @@ export function createCallingService(store, provider = plivoRequest) {
       } else {
         [lead] = await eligibleLeads(query,userId,Number(body.requestId));
       }
-      if (!lead) throw fail(422,'This lead is fresh, no longer requested, or does not belong to you.');
+      if (!lead) throw fail(422,'This lead is unavailable, no longer requested, or does not belong to you.');
       const phone = normalizePhone(lead.phone);
       if (manual && !/^\+91[6-9]\d{9}$/.test(phone)) throw fail(422,'Enter a valid 10-digit Indian mobile number.');
       const callerKey = phone.startsWith('+91') ? 'FROM_NUMBER_INDIA' : phone.startsWith('+1') ? 'FROM_NUMBER_US' : 'FROM_NUMBER_EU';

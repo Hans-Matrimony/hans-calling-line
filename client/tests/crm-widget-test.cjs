@@ -9,7 +9,7 @@ const server=http.createServer((_req,res)=>{res.setHeader('Content-Type','text/h
   const errors=[];let page;
   try {
     page=await browser.newPage({viewport:{width:1100,height:750}});page.on('pageerror',e=>errors.push(e.message));
-    let leads=[{requestId:1,leadId:10,leadType:1,name:'Old requested',phone:'9876543210'}],writes=[],audioReady=false,state={session:null,call:null},audioOwner,denyMic=false,holdAudio=false,enabled=true;
+    let leads=[{requestId:2,leadId:11,leadType:1,name:'Fresh',phone:'9876543211'}],writes=[],audioReady=false,state={session:null,call:null},audioOwner,denyMic=false,holdAudio=false,enabled=true;
     await page.addInitScript(()=>{
       window.HansCallingConfig={base:'/crm/calling',sdk:'/mock-plivo.js',csrf:'test-csrf'};
       window.micCount=0;window.denyMic=false;
@@ -39,12 +39,13 @@ const server=http.createServer((_req,res)=>{res.setHeader('Content-Type','text/h
     });
     const boot=async()=>{writes=[];audioReady=false;state={session:null,call:null};await page.goto(base);await page.addScriptTag({content:widget});await page.waitForFunction(()=>document.querySelectorAll('[data-hans-request]').length===1);};
     await boot();assert.equal(await page.evaluate(()=>window.micCount),0,'page load must not request microphone');
-    assert.equal(await page.locator('tr').nth(1).getByRole('button',{name:'Call',exact:true}).count(),0,'fresh row has no Call button');
+    assert.equal(await page.locator('tr').nth(1).getByRole('button',{name:'Call',exact:true}).count(),1,'fresh requested row has a Call button');
     await page.getByRole('button',{name:'Call',exact:true}).click();await page.waitForFunction(()=>window.micCount===1);
     await page.waitForTimeout(1000);assert.equal(writes.filter(w=>w.p.endsWith('/call')).length,0,'SDK audio alone must not dial');
     await page.getByRole('button',{name:'Call',exact:true}).click();audioReady=true;
     await page.waitForFunction(()=>document.querySelector('[data-status]').textContent==='Calling lead...');
     assert.equal(writes.filter(w=>w.p.endsWith('/call')).length,1,'double click sends one call');
+    assert.equal(writes.find(w=>w.p.endsWith('/call')).body.requestId,2,'Fresh lead button calls its request');
     await page.getByRole('button',{name:'Mute',exact:true}).click();assert.equal(await page.getByRole('button',{name:'Unmute',exact:true}).count(),1);
     state.call.ended_at='2026-09-22 10:00:00';state.call.hangup_cause='NORMAL_CLEARING';
     await page.getByRole('button',{name:'Close',exact:true}).waitFor({state:'visible'});assert.equal(await page.getByRole('button',{name:'Call',exact:true}).count(),1,'previously called requested lead keeps Call');
@@ -64,6 +65,6 @@ const server=http.createServer((_req,res)=>{res.setHeader('Content-Type','text/h
     await page.getByRole('button',{name:'Cancel',exact:true}).click();await page.waitForTimeout(1700);
     assert.equal(writes.filter(w=>w.p.endsWith('/call')).length,0,'cancel during delayed audio response must not call customer');
     assert.ok(writes.some(w=>w.p.endsWith('/stop')),'delayed audio is stopped');assert.deepEqual(errors,[]);
-    console.log('PASS: native CRM widget buttons, no automatic mic, Fresh exclusion, re-requested rows, audio gating, double-click, mute, redial availability, denied mic and cancellation.');
+    console.log('PASS: native CRM widget buttons, no automatic mic, Fresh requested calling, re-requested rows, audio gating, double-click, mute, redial availability, denied mic and cancellation.');
   }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}
 })().catch(e=>{console.error(e);process.exitCode=1;server.close();});

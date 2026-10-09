@@ -45,12 +45,13 @@ try {
   await q('INSERT INTO users VALUES(7,?,?,?,?,5,1),(8,?,?,?,?,5,1)', ['TSE Seven','seven@test.invalid',hash.replace('$2b$','$2y$'),'9876543210','TSE Eight','eight@test.invalid',hash,'9876543211']);
   await q("INSERT INTO incomplete_leads VALUES (10,'Old New-type lead','9876543210',DATE_SUB(DATE_ADD(UTC_TIMESTAMP(),INTERVAL 330 MINUTE),INTERVAL 3 DAY),NULL),(11,'Fresh','9876543211',DATE_ADD(UTC_TIMESTAMP(),INTERVAL 330 MINUTE),NULL),(12,'Old created fresh meta','9876543212',DATE_SUB(UTC_TIMESTAMP(),INTERVAL 5 DAY),DATE_ADD(UTC_TIMESTAMP(),INTERVAL 330 MINUTE))");
   await q("INSERT INTO user_data VALUES(20,'Website','9876543220')");
-  await q('INSERT INTO leads VALUES(10,20,DATE_SUB(UTC_TIMESTAMP(),INTERVAL 5 DAY))');
+  await q('INSERT INTO leads VALUES(10,20,DATE_SUB(DATE_ADD(UTC_TIMESTAMP(),INTERVAL 330 MINUTE),INTERVAL 1 HOUR))');
   for(const row of [[1,7,10,1,'requested'],[2,7,11,1,'requested'],[3,8,10,1,'requested'],[4,7,10,1,'picked'],[5,7,10,0,'requested'],[6,7,12,9,'requested']])
     await q('INSERT INTO user_request_leads VALUES(?,?,?,?,?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 330 MINUTE))',row);
+  await q("INSERT INTO user_request_leads VALUES(7,7,11,1,'requested',DATE_SUB(DATE_ADD(UTC_TIMESTAMP(),INTERVAL 330 MINUTE),INTERVAL 1 DAY)),(8,7,999,1,'requested',DATE_ADD(UTC_TIMESTAMP(),INTERVAL 330 MINUTE))");
   const before=JSON.stringify(await q('SELECT * FROM user_request_leads ORDER BY id'));
   const eligible=await eligibleLeads(q,7);
-  assert.deepEqual(eligible.map(l=>l.requestId),[5,1]);assert.equal(eligible[0].phone,'9876543220');
+  assert.deepEqual(eligible.map(l=>l.requestId),[6,5,2,1]);assert.equal(eligible.find(l=>l.requestId===5).phone,'9876543220');
   let providerCalls=[],requestCounter=0;
   const provider=async (path,method='GET',body)=>{
     providerCalls.push({path,method,body});
@@ -82,7 +83,7 @@ try {
   await service.event('answer','audio',session.id,{CallUUID:'rep-uuid'});
   await assert.rejects(service.startCall(7,body),e=>e.status===409);
   await service.event('conference','audio',session.id,{CallUUID:'rep-uuid',ConferenceAction:'enter',ConferenceName:'crm-'+session.id,ConferenceMemberID:'1'});
-  for(const requestId of [2,3,4,6])await assert.rejects(service.startCall(7,{...body,key:randomUUID(),requestId}),e=>e.status===422);
+  for(const requestId of [3,4,7,8])await assert.rejects(service.startCall(7,{...body,key:randomUUID(),requestId}),e=>e.status===422);
   const [call,duplicate]=await Promise.all([service.startCall(7,body),service.startCall(7,body)]);assert.equal(call.id,duplicate.id);
   assert.equal(providerCalls.filter(c=>c.path==='Call/' && c.method==='POST').length,2,'one audio + one customer call');
   await assert.rejects(service.startCall(7,{...body,key:randomUUID()}),e=>e.status===409);
@@ -95,6 +96,14 @@ try {
   await service.event('conference','call',call.id,{CallUUID:'lead-uuid',ConferenceAction:'enter',ConferenceName:'crm-'+session.id,ConferenceMemberID:'1'});
   assert.equal((await service.state(7)).call.status,'ended','late callback must not resurrect ended call');
   assert.ok((await eligibleLeads(q,7)).some(l=>l.requestId===1),'previous calls must not remove requested lead');
+  // Fresh source dates and fresh meta dates are allowed only in Request Leads.
+  for (const requestId of [2,5,6]) {
+    const freshCall=await service.startCall(7,{...body,key:randomUUID(),requestId});
+    const saved=(await q('SELECT request_id,phone FROM hans_calling_calls WHERE id=?',[freshCall.id]))[0];
+    assert.equal(saved.request_id,requestId);
+    assert.equal(saved.phone,'+91'+eligible.find(l=>l.requestId===requestId).phone);
+    await service.event('hangup','call',freshCall.id,{CallUUID:'fresh-'+requestId,HangupCause:'NORMAL_CLEARING'});
+  }
   const redial=await service.startCall(7,{...body,key:randomUUID()});assert.notEqual(redial.id,call.id);
   await service.stopOwned(7,{owner,sessionId:session.id});await service.sweep();
   assert.ok((await service.state(7)).session.ended_at);
@@ -102,7 +111,7 @@ try {
   await q('INSERT INTO hans_calling_admins VALUES(?,?,?,1)',['legacy-admin','admin@test.invalid',hash]);
   const adminLogin=await request('/api/login',{body:{email:'admin@test.invalid',password:'test-password'}});assert.equal(adminLogin.res.status,200);
   const adminCookie=adminLogin.res.headers.get('set-cookie').split(';')[0];
-  const reports=await request('/api/crm-reports',{cookie:adminCookie});assert.equal(reports.res.status,200);assert.equal(JSON.parse(reports.data).calls.length,2);
+  const reports=await request('/api/crm-reports',{cookie:adminCookie});assert.equal(reports.res.status,200);assert.equal(JSON.parse(reports.data).calls.length,5);
   assert.equal((await request('/api/calling/leads',{cookie:adminCookie})).res.status,403);
   // Auto Calling consumes only a CRM-owned durable reservation, never arbitrary browser phone data.
   await q("ALTER TABLE users ADD temple_id VARCHAR(40)");
@@ -139,7 +148,7 @@ try {
   assert.equal(before,JSON.stringify(await q('SELECT * FROM user_request_leads ORDER BY id')));
   await q('UPDATE users SET active_status=0 WHERE id=7');assert.equal((await request('/api/me',{cookie})).res.status,401);
   assert.equal((await request('/webhooks/crm/answer?kind=audio&id='+session.id,{body:{}})).res.status,403);
-  console.log('PASS: real MySQL migration, Fresh filtering, CRM credentials, ownership, audio gating, concurrency, idempotency, redial, callbacks, recordings, stop, reports unchanged CRM status, Auto Calling ownership, Fresh revalidation and auto retry deduplication.');
+  console.log('PASS: real MySQL migration, Fresh requested calls, CRM credentials, ownership, audio gating, concurrency, idempotency, redial, callbacks, recordings, stop, reports unchanged CRM status, Auto Calling ownership, Fresh revalidation and auto retry deduplication.');
 } finally {
   if(http)await new Promise(resolve=>http.close(resolve));
   if(store)await store.close();
