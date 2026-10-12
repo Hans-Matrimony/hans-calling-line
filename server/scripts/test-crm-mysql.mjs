@@ -146,6 +146,7 @@ try {
   const autoReported=autoReport.calls.find(c=>c.id===autoCall.id);assert.equal(autoReported.queue,'auto');assert.equal(autoReported.outcome,'add_lead');
   await service.stopOwned(7,{owner:autoOwner,sessionId:autoAudio.id});
   assert.equal(before,JSON.stringify(await q('SELECT * FROM user_request_leads ORDER BY id')));
+  await (await import('./crm-inbound-test.mjs')).testInboundRouting(store);
   await q('UPDATE users SET active_status=0 WHERE id=7');assert.equal((await request('/api/me',{cookie})).res.status,401);
   assert.equal((await request('/webhooks/crm/answer?kind=audio&id='+session.id,{body:{}})).res.status,403);
   console.log('PASS: real MySQL migration, Fresh requested calls, CRM credentials, ownership, audio gating, concurrency, idempotency, redial, callbacks, recordings, stop, reports unchanged CRM status, Auto Calling ownership, Fresh revalidation and auto retry deduplication.');
