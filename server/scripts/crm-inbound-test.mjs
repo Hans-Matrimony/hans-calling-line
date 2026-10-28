@@ -38,6 +38,8 @@ export async function testInboundRouting(store) {
   const manual = await seed(7,-1);
   const sticky = await check(7,'+919000000007');
   assert.equal(sticky.row.outbound_call_id,manual);
+  const bucket = await seed(8,-3);
+  assert.equal((await check(8,'+919000000008')).row.outbound_call_id,bucket);
   await seed(8,43);
   await check(8,'+919000000008');
   assert.equal(await inbound.answer(sticky.body),sticky.xml,'Retry must retain original route');
