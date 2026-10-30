@@ -33,6 +33,8 @@ export async function testInboundRouting(store) {
   await check(null,fallback);
   const auto = await seed(7,0);
   assert.equal((await check(7,'+919000000007')).row.outbound_call_id,auto);
+  const direct = await seed(8,-4);
+  assert.equal((await check(8,'+919000000008')).row.outbound_call_id,direct);
   const requested = await seed(8,42);
   assert.equal((await check(8,'+919000000008')).row.outbound_call_id,requested);
   const manual = await seed(7,-1);

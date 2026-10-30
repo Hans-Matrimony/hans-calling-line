@@ -36,7 +36,7 @@ export function createInboundService(store) {
       const last=await one(query,`SELECT c.id,c.crm_user_id,s.mobile,u.role,u.active_status
         FROM hans_calling_calls c LEFT JOIN users u ON u.id=c.crm_user_id
         LEFT JOIN hans_calling_inbound_settings s ON s.crm_user_id=c.crm_user_id
-        WHERE (c.request_id>=-1 OR c.request_id=-3) AND c.phone=? AND REPLACE(c.from_number,'+','')=?
+        WHERE (c.request_id>=-1 OR c.request_id IN (-3,-4)) AND c.phone=? AND REPLACE(c.from_number,'+','')=?
           AND (c.call_uuid IS NOT NULL OR c.request_uuid IS NOT NULL)
           AND COALESCE(c.hangup_cause,'')<>'provider_rejected'
         ORDER BY c.created_at DESC,c.id DESC LIMIT 1`,[from,to.slice(1)]);

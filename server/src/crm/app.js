@@ -105,7 +105,7 @@ export function createCrmApp(store, { provider = plivoRequest, verifyWebhook = v
   router.get('/leads',async (req,res) => res.json({leads:await eligibleLeads(q,req.actor.id)}));
   router.post('/credentials',async (req,res) => res.json(await service.credentials(req.actor.id,req.body.owner)));
   router.post('/audio',async (req,res) => res.json(await service.startAudio(req.actor.id,req.body.owner)));
-  router.post('/call',async (req,res) => res.json(await service.startCall(req.actor.id,req.body)));
+  router.post('/call',async (req,res) => res.json(await service.startCall(req.actor.id,req.body,{crmBridge:req.crmBridge === true})));
   router.get('/state',async (req,res) => res.json(await service.state(req.actor.id)));
   router.post('/stop',async (req,res) => res.json(await service.stopOwned(req.actor.id,req.body)));
   app.use('/api/calling',authenticated,(req,_res,next) => { if(req.actor.role!=='rep') throw fail(403,'TSE login required for calling.'); next(); },router);
@@ -115,6 +115,7 @@ export function createCrmApp(store, { provider = plivoRequest, verifyWebhook = v
     if (!Number.isSafeInteger(id) || id<=0) throw fail(401,'Invalid CRM identity.');
     req.actor=await user(id);
     if (!req.actor) throw fail(403,'Active CRM TSE login required.');
+    req.crmBridge=true;
     next();
   },router);
   app.get('/api/crm-reports',authenticated,async (req,res) => {
@@ -130,7 +131,7 @@ export function createCrmApp(store, { provider = plivoRequest, verifyWebhook = v
     }
     const where=clauses.join(' AND ');
     const calls=await q(`SELECT c.*,u.name AS tse_name,u.email AS tse_email,a.outcome,a.disposition,
-      CASE WHEN c.request_id=-3 THEN 'bucket' WHEN c.request_id=-1 THEN 'manual' WHEN a.id IS NULL THEN 'requested' ELSE 'auto' END AS queue
+      CASE WHEN c.request_id=-4 THEN 'direct' WHEN c.request_id=-3 THEN 'bucket' WHEN c.request_id=-1 THEN 'manual' WHEN a.id IS NULL THEN 'requested' ELSE 'auto' END AS queue
       FROM hans_calling_calls c LEFT JOIN users u ON u.id=c.crm_user_id
       LEFT JOIN hans_calling_auto_leads a ON a.id=c.idempotency_key AND a.crm_user_id=c.crm_user_id
       WHERE ${where} ORDER BY c.created_at DESC,c.id DESC LIMIT 100 OFFSET ${Math.min(page,100000)*100}`,args);

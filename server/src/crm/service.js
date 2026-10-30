@@ -100,13 +100,17 @@ export function createCallingService(store, provider = plivoRequest) {
     });
     return fresh ? dial('audio', row, 'sip:' + username + '_' + need('PLIVO_AUTH_ID') + '@phone.plivo.com') : row;
   }
-  async function startCall(userId, body) {
+  async function startCall(userId, body, { crmBridge = false } = {}) {
+    const direct = body.directSheetLeadId != null;
+    // CRM validates its env allowlist. Only its authenticated bridge can request this category.
+    if (direct && !crmBridge) throw fail(403,'Use Direct Sheet in CRM to call this lead.');
     const bucket = body.bucketLeadId != null;
     const manual = body.manualPhone != null;
     const manualDigits = String(body.manualPhone ?? '').replace(/\D/g,'');
     const validManual = /^(?:91)?[6-9]\d{9}$/.test(manualDigits);
     if (!uuid(body.key) || !uuid(body.sessionId) || !uuid(body.owner)
-      || (bucket ? !Number.isSafeInteger(Number(body.bucketLeadId)) || Number(body.bucketLeadId)<1 || manual || body.autoLeadId != null || body.requestId != null
+      || (direct ? !Number.isSafeInteger(Number(body.directSheetLeadId)) || Number(body.directSheetLeadId)<1 || bucket || manual || body.autoLeadId != null || body.requestId != null
+        : bucket ? !Number.isSafeInteger(Number(body.bucketLeadId)) || Number(body.bucketLeadId)<1 || manual || body.autoLeadId != null || body.requestId != null
         : manual ? !validManual || body.autoLeadId != null || body.requestId != null
         : body.autoLeadId ? !uuid(body.autoLeadId) || body.key !== body.autoLeadId : !Number.isSafeInteger(Number(body.requestId)))) throw fail(422,'Invalid call request.');
     configured();
@@ -119,7 +123,16 @@ export function createCallingService(store, provider = plivoRequest) {
       const active = await one(query, 'SELECT id FROM hans_calling_calls WHERE crm_user_id=? AND ended_at IS NULL LIMIT 1', [userId]);
       if (active) throw fail(409,'A call is already in progress.');
       let lead;
-      if (bucket) {
+      if (direct) {
+        const source = await one(query, `SELECT d.id,d.full_name AS name,d.user_phone AS phone FROM direct_sheet_leads d
+          JOIN users u ON u.id=d.work_tse_id
+          WHERE d.id=? AND d.work_tse_id=? AND d.crm_profile_id IS NULL
+            AND u.active_status=1 AND u.role IN (3,5,7)`, [Number(body.directSheetLeadId),userId]);
+        if (!source) throw fail(422,'This Direct Sheet lead is unavailable or belongs to another TSE.');
+        if (!/^(?:\+91|0091|91)?[6-9][0-9]{9}$/.test(String(source.phone || '').replace(/[\s()-]/g,'')))
+          throw fail(422,'This Direct Sheet lead needs a valid Indian mobile number.');
+        lead = {requestId:-4,leadId:source.id,leadType:0,name:source.name,phone:source.phone};
+      } else if (bucket) {
         // Independently enforce the authenticated TSE's bucket at dial time.
         const actor = await one(query, 'SELECT temple_id FROM users WHERE id=? AND active_status=1 AND role IN (3,5,7)', [userId]);
         if (!actor?.temple_id) throw fail(403,'This TSE account is unavailable.');

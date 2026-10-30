@@ -149,6 +149,9 @@ try {
   const bucketId=await (await import('./crm-bucket-test.mjs')).testBucketCalling(store,service,providerCalls);
   const bucketReport=JSON.parse((await request('/api/crm-reports',{cookie:adminCookie})).data);
   assert.equal(bucketReport.calls.find(call=>call.id===bucketId).queue,'bucket');
+  const directId=await (await import('./crm-direct-sheet-test.mjs')).testDirectSheetCalling(store,service,providerCalls,request,cookie);
+  const directReport=JSON.parse((await request('/api/crm-reports',{cookie:adminCookie})).data);
+  assert.equal(directReport.calls.find(call=>call.id===directId).queue,'direct');
   await (await import('./crm-inbound-test.mjs')).testInboundRouting(store);
   await q('UPDATE users SET active_status=0 WHERE id=7');assert.equal((await request('/api/me',{cookie})).res.status,401);
   assert.equal((await request('/webhooks/crm/answer?kind=audio&id='+session.id,{body:{}})).res.status,403);
